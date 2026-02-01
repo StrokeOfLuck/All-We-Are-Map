@@ -1,4 +1,81 @@
-ustomerId, lat, lon, entity }
+// -------------------------------
+// Cesium: no ion tokens needed
+// -------------------------------
+Cesium.Ion.defaultAccessToken = "";
+
+// -------------------------------
+// Viewer (NO default imagery)
+// -------------------------------
+const viewer = new Cesium.Viewer("cesiumContainer", {
+  animation: false,
+  timeline: false,
+  baseLayerPicker: false,
+  sceneModePicker: true,
+  geocoder: true,
+  imageryProvider: false,
+  terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+});
+
+// ✅ Sharp labels/billboards on high-DPI screens (must be AFTER viewer is created)
+viewer.resolutionScale = window.devicePixelRatio;
+
+// Canvas reference + keyboard focus
+const canvas = viewer.scene.canvas;
+canvas.setAttribute("tabindex", "0");
+canvas.focus();
+
+// -------------------------------
+// Basemap (pick ONE)
+// -------------------------------
+
+/*
+// FREE backup basemap (no tokens)
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
+
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    credit: "Esri World Imagery",
+  })
+);
+
+// =============================================================
+// KNOBS YOU CARE ABOUT
+// =============================================================
+
+// Camera distances
+const overviewRangeMeters = 2550000; // how far OUT between sites
+const siteRangeMeters = 1200; // how close IN at the site
+
+// Travel behavior
+const travelSeconds = 1.5; // "move above next site" + "zoom out"
+const zoomInSeconds = 2.0; // zooming down flat
+const tiltSeconds = 1.6; // tilt into orbit pitch
+
+// Orbit behavior (ONLY while holding at the site)
+const orbitPitchDeg = -45;
+const orbitSpeedDegPerSec = 8;
+const holdSeconds = 3;
+
+// Flat travel orientation
+const flatHeadingDeg = 0;
+const flatPitchDeg = -90;
+
+// Auto tour
+let autoAdvance = true;
+
+// =============================================================
+// DATA + STATE
+// =============================================================
+const entities = [];
+const siteItems = []; // { name, customerId, lat, lon, entity }
 
 let activeIndex = 0;
 let orbit = false;
