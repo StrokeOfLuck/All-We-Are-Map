@@ -379,8 +379,8 @@ async function buildEntitiesFromCSV() {
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
       model: {
         uri: "./models/cc0_light_bulb.glb",
-        minimumPixelSize: 40,
-        maximumScale: 2000,
+        minimumPixelSize: 2000,
+        maximumScale: 20000,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
       },
     });
