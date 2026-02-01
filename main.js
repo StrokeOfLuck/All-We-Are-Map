@@ -380,10 +380,10 @@ async function buildEntitiesFromCSV() {
 
     // ✅ Yellow circle that stays visible at any distance
     point: {
-      pixelSize: 10,                         // dot size on screen
+      pixelSize: 100,                         // dot size on screen
       color: Cesium.Color.YELLOW,
       outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 2,
+      outlineWidth: 3,
       disableDepthTestDistance: Number.POSITIVE_INFINITY, // draw on top of terrain
       distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7), // show far away
     },
