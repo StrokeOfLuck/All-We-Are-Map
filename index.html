@@ -27,7 +27,7 @@
     /* ================= Sidebar ================= */
     #sidebar {
       position: absolute;
-      top: 12px;
+      top: 76px;
       left: 12px;
       width: 300px;
       max-height: calc(100% - 24px);
@@ -100,23 +100,23 @@
     }
 
     /* ================= Floating controls (always visible) ================= */
-    #floatingControls {
+     #floatingControls {
       position: absolute;
       top: 12px;
-      right: 12px;
+      left: 12px;          /* ✅ move to left */
+      right: auto;         /* ✅ remove right anchoring */
       z-index: 1200;
-
+    
       display: inline-flex;
       gap: 8px;
       padding: 8px;
       border-radius: 12px;
-
+    
       background: rgba(20, 20, 20, 0.86);
       border: 1px solid rgba(255,255,255,0.12);
       backdrop-filter: blur(6px);
       pointer-events: auto;
     }
-
     .fcBtn {
       width: 44px;
       height: 44px;
