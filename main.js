@@ -19,6 +19,21 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
 // -------------------------------
 // Basemap (pick ONE)
 // -------------------------------
+
+/*
+// -------------------------------
+// Add a FREE basemap (no tokens)
+// Option A (default): OpenTopoMap (reliable for testing)
+// -------------------------------
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
+
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -26,36 +41,177 @@ viewer.imageryLayers.addImageryProvider(
   })
 );
 
-// -------------------------------
-// Sites as [lon, lat]
-// -------------------------------
-const sites = [
-  [31.428655467144992, 0.9614846273101064],
-  [34.01854528405185, 0.7197713258559371],
-  [30.610227104827818, 0.6947441058489014],
-  [32.91984166612055, 0.686121295563971],
-  [33.326719075381885, 0.6598445605145666],
-];
+// =============================================================
+// LOAD SITES FROM CSV (NO DEPENDENCIES)
+// CSV format (yours):
+// - Has a "Coordinates" column like: "0.360129..., 32.581690..."
+//   That is LAT, LON (backwards for Cesium)
+// - Cesium needs: fromDegrees(LON, LAT)
+// Also CSV has multiple rows per customer (Year), so we dedupe:
+// - Keep latest Year that still has valid coordinates
+// =============================================================
 
-// -------------------------------
-// Dots
-// -------------------------------
 const entities = [];
-sites.forEach((p, i) => {
-  entities.push(
-    viewer.entities.add({
-      name: `Site ${i + 1}`,
-      position: Cesium.Cartesian3.fromDegrees(p[0], p[1]),
-      point: {
-        pixelSize: 10,
-        color: Cesium.Color.YELLOW,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 1,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-    })
+
+// Robust CSV parser that handles quoted fields + quoted commas
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    // Escaped quote inside quotes: ""
+    if (ch === '"' && inQuotes && next === '"') {
+      cur += '"';
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      row.push(cur);
+      cur = "";
+      continue;
+    }
+
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      // Handle CRLF
+      if (ch === "\r" && next === "\n") i++;
+      row.push(cur);
+      cur = "";
+      if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
+      row = [];
+      continue;
+    }
+
+    cur += ch;
+  }
+
+  row.push(cur);
+  if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
+
+  return rows;
+}
+
+function toNum(x) {
+  const n = Number(String(x).trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+// Your CSV "Coordinates" is stored as: "LAT, LON"
+function parseCoordinatesLatLon(coordStr) {
+  if (!coordStr) return null;
+  const parts = String(coordStr)
+    .replace(/^"+|"+$/g, "") // strip surrounding quotes if any
+    .split(",")
+    .map((s) => s.trim());
+
+  if (parts.length < 2) return null;
+
+  const lat = toNum(parts[0]);
+  const lon = toNum(parts[1]);
+  if (lat == null || lon == null) return null;
+
+  return { lat, lon };
+}
+
+async function buildEntitiesFromCSV() {
+  const res = await fetch("sites.csv");
+  if (!res.ok) {
+    console.error("Failed to fetch sites.csv:", res.status, res.statusText);
+    return;
+  }
+
+  const text = await res.text();
+  const rows = parseCSV(text);
+
+  if (rows.length < 2) {
+    console.warn("sites.csv has no data rows.");
+    return;
+  }
+
+  // Normalize headers
+  const headers = rows[0].map((h) =>
+    String(h).replace("\ufeff", "").trim().toLowerCase()
   );
-});
+
+  const idxCustomerId = headers.indexOf("customer id");
+  const idxCustomerName = headers.indexOf("customer name");
+  const idxYear = headers.indexOf("year");
+  const idxCoordinates = headers.indexOf("coordinates");
+
+  if (idxCoordinates === -1) {
+    console.error('CSV missing required column: "Coordinates"');
+    return;
+  }
+
+  // Deduplicate: Customer ID -> keep newest year with valid coords
+  const bestByCustomer = new Map();
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+
+    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
+    if (!coord) continue;
+
+    const year = idxYear !== -1 ? toNum(r[idxYear]) : null;
+
+    const customerId =
+      idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
+        ? String(r[idxCustomerId]).trim()
+        : `row-${i}`;
+
+    const name =
+      idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
+        ? String(r[idxCustomerName]).trim()
+        : `Site ${customerId}`;
+
+    const prev = bestByCustomer.get(customerId);
+
+    // If none yet, store
+    if (!prev) {
+      bestByCustomer.set(customerId, { name, year, coord });
+      continue;
+    }
+
+    // If year exists, keep the newer record
+    if (year != null && (prev.year == null || year > prev.year)) {
+      bestByCustomer.set(customerId, { name, year, coord });
+    }
+  }
+
+  // Build Cesium entities
+  for (const [, item] of bestByCustomer.entries()) {
+    const { lat, lon } = item.coord;
+
+    // IMPORTANT SWAP:
+    // CSV gives LAT, LON
+    // Cesium needs LON, LAT
+    entities.push(
+      viewer.entities.add({
+        name: item.name,
+        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+        point: {
+          pixelSize: 10,
+          color: Cesium.Color.YELLOW,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 1,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+    );
+  }
+
+  console.log(`Loaded ${entities.length} unique sites from sites.csv`);
+}
 
 // =============================================================
 // KNOBS YOU CARE ABOUT
@@ -63,21 +219,21 @@ sites.forEach((p, i) => {
 
 // Camera distances
 const overviewRangeMeters = 450000; // how far OUT between sites (Uganda view)
-const siteRangeMeters = 1200;       // how close IN at the site
+const siteRangeMeters = 1200; // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 4.5;          // "move above next site" + "zoom out"
-const zoomInSeconds = 4.0;          // zooming down flat
-const tiltSeconds = 1.6;            // how fast it tilts into orbit pitch
+const travelSeconds = 2.5; // "move above next site" + "zoom out"
+const zoomInSeconds = 2.0; // zooming down flat
+const tiltSeconds = 1.6; // how fast it tilts into orbit pitch
 
 // Orbit behavior (ONLY while holding at the site)
-const orbitPitchDeg = -45;          // the tilt angle once at the site
-const orbitSpeedDegPerSec = 8;      // rotation speed at the site
-const holdSeconds = 6;              // how long to rotate at each site
+const orbitPitchDeg = -45; // the tilt angle once at the site
+const orbitSpeedDegPerSec = 8; // rotation speed at the site
+const holdSeconds = 6; // how long to rotate at each site
 
 // Flat travel orientation (north-up, no rotation)
-const flatHeadingDeg = 0;           // north-up
-const flatPitchDeg = -90;           // straight down
+const flatHeadingDeg = 0; // north-up
+const flatPitchDeg = -90; // straight down
 
 // Auto tour
 let autoAdvance = true;
@@ -86,7 +242,7 @@ let autoAdvance = true;
 // INTERNAL STATE
 // =============================================================
 let activeIndex = 0;
-let orbit = false;                 // IMPORTANT: orbit starts OFF (travel flat)
+let orbit = false; // IMPORTANT: orbit starts OFF (travel flat)
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
@@ -139,7 +295,7 @@ async function goAboveSiteFlat() {
     rangeMeters: overviewRangeMeters,
     pitchDeg: flatPitchDeg,
     headingDegValue: flatHeadingDeg,
-    durationSec: travelSeconds,
+    durationSec: travelSeconds/2,
   });
 }
 
@@ -240,9 +396,18 @@ async function runTour() {
 }
 
 // =============================================================
-// START
+// START (wait for CSV to load first)
 // =============================================================
-runTour();
+(async function init() {
+  await buildEntitiesFromCSV();
+
+  if (entities.length === 0) {
+    console.warn("No sites loaded from sites.csv; tour not started.");
+    return;
+  }
+
+  runTour();
+})();
 
 // =============================================================
 // CONTROLS
