@@ -579,6 +579,14 @@ window.addEventListener(
       e.preventDefault();
       return;
     }
+
+    if (k === "h") {
+  const help = document.getElementById("controlsHelp");
+  if (help) help.classList.toggle("controlsHelpHidden");
+  e.preventDefault();
+  return;
+  }
+    
   },
   true // 👈 capture mode (critical)
 );
