@@ -41,37 +41,6 @@ viewer.imageryLayers.addImageryProvider(
   })
 );
 
-
-//Disable the default zoom because it goes into much for the images Im loading
-viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
-  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
-);
-//Should let me double click to a set zoom distance
-const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-
-handler.setInputAction((movement) => {
-  const picked = viewer.scene.pick(movement.position);
-  if (!picked || !picked.id) return;
-
-  autoAdvance = false;
-  orbit = false;
-
-  viewer.camera.flyToBoundingSphere(
-    new Cesium.BoundingSphere(
-      picked.id.position.getValue(Cesium.JulianDate.now()),
-      1.0
-    ),
-    {
-      duration: 1.8,
-      offset: new Cesium.HeadingPitchRange(
-        Cesium.Math.toRadians(0),           // north-up
-        Cesium.Math.toRadians(flatPitchDeg),// straight down
-        siteRangeMeters                     // 👈 YOUR distance
-      ),
-    }
-  );
-}, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
-
 // =============================================================
 // LOAD SITES FROM CSV (NO DEPENDENCIES)
 // CSV format (yours):
@@ -79,10 +48,11 @@ handler.setInputAction((movement) => {
 //   That is LAT, LON (backwards for Cesium)
 // - Cesium needs: fromDegrees(LON, LAT)
 // Also CSV has multiple rows per customer (Year), so we dedupe:
-// - Keep latest Year that still has valid coordinates
+// - Keep latest Year with valid coordinates
 // =============================================================
 
 const entities = [];
+const siteItems = []; // { name, customerId, lat, lon, entity }
 
 // Robust CSV parser that handles quoted fields + quoted commas
 function parseCSV(text) {
@@ -207,7 +177,6 @@ async function buildEntitiesFromCSV() {
 
     const prev = bestByCustomer.get(customerId);
 
-    // If none yet, store
     if (!prev) {
       bestByCustomer.set(customerId, { name, year, coord });
       continue;
@@ -219,33 +188,34 @@ async function buildEntitiesFromCSV() {
     }
   }
 
-  // Build Cesium entities
-  for (const [, item] of bestByCustomer.entries()) {
+  // Build Cesium entities + sidebar items
+  for (const [customerId, item] of bestByCustomer.entries()) {
     const { lat, lon } = item.coord;
 
     // IMPORTANT SWAP:
     // CSV gives LAT, LON
     // Cesium needs LON, LAT
-    entities.push(
-      viewer.entities.add({
-        name: item.name,
-        position: Cesium.Cartesian3.fromDegrees(lon, lat),
-        point: {
-          pixelSize: 10,
-          color: Cesium.Color.YELLOW,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 1,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-      })
-    );
+    const entity = viewer.entities.add({
+      name: item.name,
+      position: Cesium.Cartesian3.fromDegrees(lon, lat),
+      point: {
+        pixelSize: 10,
+        color: Cesium.Color.YELLOW,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 1,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+
+    entities.push(entity);
+    siteItems.push({ name: item.name, customerId, lat, lon, entity });
   }
 
   console.log(`Loaded ${entities.length} unique sites from sites.csv`);
 }
 
 // =============================================================
-// KNOBS YOU CARE ABOUT
+// KNOBS YOU CARE ABOUT (KEEPING YOUR UPDATED VALUES)
 // =============================================================
 
 // Camera distances
@@ -326,7 +296,7 @@ async function goAboveSiteFlat() {
     rangeMeters: overviewRangeMeters,
     pitchDeg: flatPitchDeg,
     headingDegValue: flatHeadingDeg,
-    durationSec: travelSeconds/2,
+    durationSec: travelSeconds / 2,
   });
 }
 
@@ -395,42 +365,115 @@ viewer.clock.onTick.addEventListener(() => {
 // =============================================================
 async function runTour() {
   while (autoAdvance) {
-    // 1) Move above current site flat (this also helps “re-acquire” if user moved)
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
-    // 2) Zoom down flat
     await zoomDownFlat();
     if (!autoAdvance) break;
 
-    // 3) Tilt into orbit pitch (still no rotation)
     await tiltIntoOrbitPitch();
     if (!autoAdvance) break;
 
-    // 4) Start rotating at site
     headingDeg = 0;
     orbit = true;
     await sleep(holdSeconds * 1000);
 
-    // 5) Stop rotating, tilt back flat
     orbit = false;
     await tiltBackToFlat();
     if (!autoAdvance) break;
 
-    // 6) Zoom out flat (Uganda view)
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
-    // 7) Next site
     activeIndex = (activeIndex + 1) % entities.length;
   }
 }
+
+// =============================================================
+// SIDEBAR UI (list + search + click-to-fly)
+// =============================================================
+function flyToSite(entity) {
+  autoAdvance = false;
+  orbit = false;
+
+  const pos = entity.position.getValue(Cesium.JulianDate.now());
+
+  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
+    duration: 1.8,
+    offset: new Cesium.HeadingPitchRange(
+      Cesium.Math.toRadians(0),           // north-up
+      Cesium.Math.toRadians(flatPitchDeg),// straight down
+      siteRangeMeters                     // your distance
+    ),
+  });
+}
+
+function renderSiteList(filterText = "") {
+  const listEl = document.getElementById("siteList");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
+
+  const q = filterText.trim().toLowerCase();
+  const filtered = q
+    ? siteItems.filter(
+        (s) =>
+          (s.name || "").toLowerCase().includes(q) ||
+          (s.customerId || "").toLowerCase().includes(q)
+      )
+    : siteItems;
+
+  filtered.forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "siteRow";
+    row.innerHTML = `
+      <div>${s.name}</div>
+      <div class="siteSub">ID: ${s.customerId}</div>
+    `;
+    row.addEventListener("click", () => flyToSite(s.entity));
+    listEl.appendChild(row);
+  });
+}
+
+function wireSearchBox() {
+  const input = document.getElementById("siteSearch");
+  if (!input) return;
+  input.addEventListener("input", () => renderSiteList(input.value));
+}
+
+// =============================================================
+// DOUBLE-CLICK: disable Cesium default "zoom too close"
+// and use our siteRangeMeters instead
+// (moved here so flatPitchDeg + siteRangeMeters already exist)
+// =============================================================
+
+// Disable the default zoom because it goes in too much for the images you're loading
+viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
+  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+);
+
+// Should let you double click to a set zoom distance
+const dblHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+dblHandler.setInputAction((movement) => {
+  const picked = viewer.scene.pick(movement.position);
+  if (!picked || !picked.id) return;
+
+  // Only fly if the thing clicked has a position (your points do)
+  if (!picked.id.position) return;
+
+  flyToSite(picked.id);
+}, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
 // =============================================================
 // START (wait for CSV to load first)
 // =============================================================
 (async function init() {
   await buildEntitiesFromCSV();
+
+  // Sidebar list
+  wireSearchBox();
+  renderSiteList();
 
   if (entities.length === 0) {
     console.warn("No sites loaded from sites.csv; tour not started.");
