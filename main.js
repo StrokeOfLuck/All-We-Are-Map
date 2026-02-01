@@ -375,39 +375,55 @@ async function buildEntitiesFromCSV() {
     const { lat, lon } = item.coord;
     
     const entity = viewer.entities.add({
-    name: item.name,
-    position: Cesium.Cartesian3.fromDegrees(lon, lat),
-
-    point: {
-      pixelSize: 4,
-      color: Cesium.Color.YELLOW,
-      outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 2,
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
-    },
+      name: item.name,
+      position: Cesium.Cartesian3.fromDegrees(lon, lat),
     
-    billboard: {
-      image: "./icons/solar_pin.png",
-      width: 28,
-      height: 28,
-      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      scaleByDistance: new Cesium.NearFarScalar(1_000, 1.0, 5_000_000, 0.25),
-    },
+      // --- Ground truth point (always visible, tiny) ---
+      point: {
+        pixelSize: 4,
+        color: Cesium.Color.YELLOW,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
+      },
     
-    label: {
-      text: item.name,
-      font: "14px sans-serif",
-      fillColor: Cesium.Color.WHITE,
-      outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 4,
-      showBackground: true,
-      backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-      pixelOffset: new Cesium.Cartesian2(0, -32),
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250000),
-    },
+      // --- Billboard icon (solar pin) ---
+      billboard: {
+        image: "./icons/solar_pin.png",   // ideally 64–128px source
+        width: 28,
+        height: 28,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    
+        // Gentle scale down when very far away (no blur)
+        scaleByDistance: new Cesium.NearFarScalar(
+          1_000.0,     // near distance (1 km)
+          1.0,         // full size
+          5_000_000.0, // far distance (5,000 km)
+          0.4          // shrink, not vanish
+        ),
+      },
+    
+      // --- Label (only when reasonably close) ---
+      label: {
+        text: item.name,
+        font: "20px sans-serif",          // bigger = crisper
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 4,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
+        pixelOffset: new Cesium.Cartesian2(0, -36),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    
+        // Show labels only when zoomed in
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(
+          0,
+          250_000
+        ),
+      },
+    });
       
     /*
     // ✅ Yellow circle that stays visible at any distance
