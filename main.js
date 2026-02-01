@@ -43,6 +43,31 @@ viewer.imageryLayers.addImageryProvider(
 );
 
 // =============================================================
+// KNOBS YOU CARE ABOUT (KEEP YOUR UPDATED VALUES HERE)
+// =============================================================
+
+// Camera distances
+const overviewRangeMeters = 2550000; // how far OUT between sites (Uganda view)
+const siteRangeMeters = 1200; // how close IN at the site
+
+// Travel behavior
+const travelSeconds = 1.5; // "move above next site" + "zoom out"
+const zoomInSeconds = 2.0; // zooming down flat
+const tiltSeconds = 1.6; // how fast it tilts into orbit pitch
+
+// Orbit behavior (ONLY while holding at the site)
+const orbitPitchDeg = -45; // the tilt angle once at the site
+const orbitSpeedDegPerSec = 8; // rotation speed at the site
+const holdSeconds = 3; // how long to rotate at each site
+
+// Flat travel orientation (north-up, no rotation)
+const flatHeadingDeg = 0; // north-up
+const flatPitchDeg = -90; // straight down
+
+// Auto tour
+let autoAdvance = true;
+
+// =============================================================
 // LOAD SITES FROM CSV (NO DEPENDENCIES)
 // CSV format (yours):
 // - Has a "Coordinates" column like: "0.360129..., 32.581690..."
@@ -216,35 +241,10 @@ async function buildEntitiesFromCSV() {
 }
 
 // =============================================================
-// KNOBS YOU CARE ABOUT (KEEPING YOUR UPDATED VALUES)
-// =============================================================
-
-// Camera distances
-const overviewRangeMeters = 2550000; // how far OUT between sites (Uganda view)
-const siteRangeMeters = 1200; // how close IN at the site
-
-// Travel behavior
-const travelSeconds = 1.5; // "move above next site" + "zoom out"
-const zoomInSeconds = 2.0; // zooming down flat
-const tiltSeconds = 1.6; // how fast it tilts into orbit pitch
-
-// Orbit behavior (ONLY while holding at the site)
-const orbitPitchDeg = -45; // the tilt angle once at the site
-const orbitSpeedDegPerSec = 8; // rotation speed at the site
-const holdSeconds = 3; // how long to rotate at each site
-
-// Flat travel orientation (north-up, no rotation)
-const flatHeadingDeg = 0; // north-up
-const flatPitchDeg = -90; // straight down
-
-// Auto tour
-let autoAdvance = true;
-
-// =============================================================
 // INTERNAL STATE
 // =============================================================
 let activeIndex = 0;
-let orbit = false; // IMPORTANT: orbit starts OFF (travel flat)
+let orbit = false; // orbit starts OFF (travel flat)
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
@@ -257,12 +257,28 @@ function sleep(ms) {
 }
 
 function getActiveSitePosition() {
+  if (!entities.length) return null;
   return entities[activeIndex].position.getValue(Cesium.JulianDate.now());
+}
+
+function setActiveIndexFromEntity(entity) {
+  const idx = entities.indexOf(entity);
+  if (idx !== -1) activeIndex = idx;
+}
+
+// Make sure the canvas can receive focus (for consistent UX)
+function forceCanvasFocus() {
+  const c = viewer.scene.canvas;
+  if (!c) return;
+  c.setAttribute("tabindex", "0");
+  c.focus({ preventScroll: true });
 }
 
 // Wrap flyToBoundingSphere in a Promise (Cesium uses callbacks)
 function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   const target = getActiveSitePosition();
+  if (!target) return Promise.resolve(false);
+
   const offset = new Cesium.HeadingPitchRange(
     Cesium.Math.toRadians(headingDegValue),
     Cesium.Math.toRadians(pitchDeg),
@@ -291,7 +307,7 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
 
 // “Travel flat above site” (north-up, straight down, far out)
 async function goAboveSiteFlat() {
-  orbit = false; // ensure NO rotation during travel
+  orbit = false;
   headingDeg = 0;
   await flyToRange({
     rangeMeters: overviewRangeMeters,
@@ -303,7 +319,7 @@ async function goAboveSiteFlat() {
 
 // “Zoom down flat” (still north-up, straight down, close range)
 async function zoomDownFlat() {
-  orbit = false; // still NO rotation
+  orbit = false;
   headingDeg = 0;
   await flyToRange({
     rangeMeters: siteRangeMeters,
@@ -315,17 +331,17 @@ async function zoomDownFlat() {
 
 // “Tilt into orbit pitch” (no rotate yet, just slant)
 async function tiltIntoOrbitPitch() {
-  orbit = false; // still not rotating during tilt
+  orbit = false;
   headingDeg = 0;
   await flyToRange({
     rangeMeters: siteRangeMeters,
     pitchDeg: orbitPitchDeg,
-    headingDegValue: 0, // start orbit facing north
+    headingDegValue: 0,
     durationSec: tiltSeconds,
   });
 }
 
-// “Tilt back flat” before leaving (no rotate)
+// “Tilt back flat” before leaving
 async function tiltBackToFlat() {
   orbit = false;
   headingDeg = 0;
@@ -337,6 +353,25 @@ async function tiltBackToFlat() {
   });
 }
 
+// Fly directly to a specific entity at your siteRangeMeters, straight down
+function flyToSite(entity) {
+  autoAdvance = false;
+  orbit = false;
+  setActiveIndexFromEntity(entity);
+
+  const pos = entity.position.getValue(Cesium.JulianDate.now());
+  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
+    duration: 1.8,
+    offset: new Cesium.HeadingPitchRange(
+      Cesium.Math.toRadians(0),
+      Cesium.Math.toRadians(flatPitchDeg),
+      siteRangeMeters
+    ),
+    complete: () => forceCanvasFocus(),
+    cancel: () => forceCanvasFocus(),
+  });
+}
+
 // =============================================================
 // ORBIT LOOP (ONLY active when orbit === true)
 // =============================================================
@@ -344,15 +379,17 @@ viewer.clock.onTick.addEventListener(() => {
   if (!orbit) return;
   if (isFlying) return;
 
+  const target = getActiveSitePosition();
+  if (!target) return;
+
   const now = performance.now();
   const dt = Math.min((now - lastPerf) / 1000, 0.05);
   lastPerf = now;
 
   headingDeg += orbitSpeedDegPerSec * dt;
 
-  // While orbiting, keep same range + pitch, only change heading
   viewer.camera.lookAt(
-    getActiveSitePosition(),
+    target,
     new Cesium.HeadingPitchRange(
       Cesium.Math.toRadians(headingDeg),
       Cesium.Math.toRadians(orbitPitchDeg),
@@ -393,41 +430,6 @@ async function runTour() {
 // =============================================================
 // SIDEBAR UI (list + search + click-to-fly)
 // =============================================================
-
-function setActiveIndexFromEntity(entity) {
-  const idx = entities.indexOf(entity);
-  if (idx !== -1) activeIndex = idx;
-}
-
-// Force keyboard focus back to Cesium after sidebar interactions
-function forceCanvasFocus() {
-  const input = document.getElementById("siteSearch");
-  if (input) input.blur();
-  if (viewer && viewer.scene && viewer.scene.canvas) viewer.scene.canvas.focus();
-}
-
-function flyToSite(entity) {
-  autoAdvance = false;
-  orbit = false;
-
-  // Make this the active site so R/T/N/P work from here
-  setActiveIndexFromEntity(entity);
-
-  // After clicking list/search, put focus back on canvas so keys work
-  forceCanvasFocus();
-
-  const pos = entity.position.getValue(Cesium.JulianDate.now());
-
-  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
-    duration: 1.8,
-    offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0), // north-up
-      Cesium.Math.toRadians(flatPitchDeg), // straight down
-      siteRangeMeters // your distance
-    ),
-  });
-}
-
 function renderSiteList(filterText = "") {
   const listEl = document.getElementById("siteList");
   if (!listEl) return;
@@ -450,8 +452,8 @@ function renderSiteList(filterText = "") {
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
     `;
-    row.addEventListener("click", () => {
-      forceCanvasFocus();
+    row.addEventListener("click", (e) => {
+      e.preventDefault();
       flyToSite(s.entity);
     });
     listEl.appendChild(row);
@@ -465,20 +467,68 @@ function wireSearchBox() {
 }
 
 // =============================================================
+// HELP OVERLAY (H toggles)
+// =============================================================
+function ensureControlsHelpEl() {
+  let el = document.getElementById("controlsHelp");
+  if (el) return el;
+
+  el = document.createElement("div");
+  el.id = "controlsHelp";
+  el.style.position = "absolute";
+  el.style.right = "12px";
+  el.style.bottom = "12px";
+  el.style.zIndex = "30";
+  el.style.maxWidth = "320px";
+  el.style.padding = "12px 14px";
+  el.style.borderRadius = "12px";
+  el.style.background = "rgba(0,0,0,0.72)";
+  el.style.color = "white";
+  el.style.fontFamily =
+    "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+  el.style.fontSize = "13px";
+  el.style.lineHeight = "1.35";
+  el.style.pointerEvents = "none"; // don't block map
+  el.style.backdropFilter = "blur(6px)";
+
+  el.innerHTML = `
+    <div style="font-weight:700; margin-bottom:6px;">Controls</div>
+    <div><b>T</b> Toggle auto tour</div>
+    <div><b>R</b> Rotate (tilt + orbit) at current site</div>
+    <div><b>N</b> Next site</div>
+    <div><b>P</b> Previous site</div>
+    <div><b>H</b> Hide or show this panel</div>
+    <div style="margin-top:8px; opacity:.9;">
+      Tip: Double click a site marker to zoom
+    </div>
+  `;
+
+  document.body.appendChild(el);
+  return el;
+}
+
+function setControlsHelpHidden(hidden) {
+  const el = ensureControlsHelpEl();
+  el.style.display = hidden ? "none" : "block";
+}
+
+// Show help by default
+let controlsHidden = false;
+ensureControlsHelpEl();
+
+// =============================================================
 // CHROME-SAFE "DOUBLE CLICK" + VISUAL HINT
 // - Chrome sometimes drops LEFT_DOUBLE_CLICK events.
-// - This uses LEFT_CLICK + timing so it works everywhere.
-// - Also shows a quick hint overlay.
+// - Use LEFT_CLICK + timing instead.
 // =============================================================
 
-// Disable Cesium's default double click zoom (optional but recommended)
+// Disable Cesium default double click zoom
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
 
-// --- Hint overlay (created dynamically, no index.html changes) ---
+// Small top-right hint that fades out
 let dblHintTimeout = null;
-
 function ensureDblHintEl() {
   let el = document.getElementById("dblClickHint");
   if (el) return el;
@@ -487,7 +537,6 @@ function ensureDblHintEl() {
   el.id = "dblClickHint";
   el.textContent = "Tip: Double click a site marker to zoom";
 
-  // Basic styling (safe, readable)
   el.style.position = "absolute";
   el.style.right = "12px";
   el.style.top = "12px";
@@ -497,10 +546,11 @@ function ensureDblHintEl() {
   el.style.borderRadius = "12px";
   el.style.background = "rgba(0,0,0,0.72)";
   el.style.color = "white";
-  el.style.fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+  el.style.fontFamily =
+    "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
   el.style.fontSize = "13px";
   el.style.lineHeight = "1.35";
-  el.style.pointerEvents = "none"; // don't block the map
+  el.style.pointerEvents = "none";
   el.style.opacity = "0";
   el.style.transition = "opacity 250ms ease";
 
@@ -510,49 +560,37 @@ function ensureDblHintEl() {
 
 function showDblHint(ms = 4500) {
   const el = ensureDblHintEl();
-
-  // cancel any existing hide timer
   if (dblHintTimeout) clearTimeout(dblHintTimeout);
-
   el.style.opacity = "1";
   dblHintTimeout = setTimeout(() => {
     el.style.opacity = "0";
   }, ms);
 }
 
-// Show it once on load
+// Show once on load
 showDblHint(5500);
 
-// --- Manual double-click detector ---
 let lastClickAt = 0;
 const DOUBLE_CLICK_MS = 320;
 
-// We use LEFT_CLICK because it fires reliably in Chrome.
-// If the user clicks the same general time twice, treat it as a double click.
 const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-
 safeClickHandler.setInputAction((movement) => {
   const now = performance.now();
-  const isDouble = (now - lastClickAt) < DOUBLE_CLICK_MS;
+  const isDouble = now - lastClickAt < DOUBLE_CLICK_MS;
   lastClickAt = now;
 
-  // If it's not a double click, we can optionally show the hint briefly
-  // when they clicked a marker (helps discovery)
+  const picked = viewer.scene.pick(movement.position);
+
+  // On single click of a marker, briefly show hint (discoverability)
   if (!isDouble) {
-    const maybePicked = viewer.scene.pick(movement.position);
-    if (maybePicked && maybePicked.id && maybePicked.id.position) {
-      showDblHint(1800);
-    }
+    if (picked && picked.id && picked.id.position) showDblHint(1500);
     return;
   }
 
-  // On a double click, pick the marker and fly to it
-  const picked = viewer.scene.pick(movement.position);
+  // On "double click", fly to marker
   if (!picked || !picked.id || !picked.id.position) return;
-
   flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
 
 // =============================================================
 // START (wait for CSV to load first)
@@ -560,7 +598,6 @@ safeClickHandler.setInputAction((movement) => {
 (async function init() {
   await buildEntitiesFromCSV();
 
-  // Sidebar list
   wireSearchBox();
   renderSiteList();
 
@@ -569,6 +606,7 @@ safeClickHandler.setInputAction((movement) => {
     return;
   }
 
+  forceCanvasFocus();
   runTour();
 })();
 
@@ -577,41 +615,31 @@ safeClickHandler.setInputAction((movement) => {
 // =============================================================
 const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
-canvas.focus();
+forceCanvasFocus();
 
 // Click stops the tour and orbit, gives user control
 canvas.addEventListener("mousedown", () => {
   autoAdvance = false;
   orbit = false;
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-  canvas.focus();
+  forceCanvasFocus();
 });
 
-// Keyboard shortcuts that still work after clicking the sidebar.
-// Use CAPTURE mode so nothing else can swallow the event first.
+// Keyboard shortcuts (capture mode so nothing else swallows them first)
 window.addEventListener(
   "keydown",
   async (e) => {
-    const active = document.activeElement;
-    const isSearchFocused = active && active.id === "siteSearch";
-
     const k = e.key.toLowerCase();
-    const isShortcut = k === "r" || k === "t" || k === "n" || k === "p";
+    const isShortcut =
+      k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
 
-    // If search is focused:
-    // - allow normal typing
-    // - but still allow our shortcut keys
-    if (isSearchFocused && !isShortcut) return;
-
-    // If a shortcut key is pressed while search is focused, blur it so keys "resume"
-    if (isSearchFocused && isShortcut) {
-      active.blur();
-      canvas.focus();
-    }
-
-    // If any other input/textarea is focused, don't hijack typing
+    // If user is typing in a text field, only allow shortcuts
+    const active = document.activeElement;
     const tag = active ? active.tagName : "";
-    if ((tag === "INPUT" || tag === "TEXTAREA") && !isShortcut) return;
+    const isTyping = tag === "INPUT" || tag === "TEXTAREA";
+    if (isTyping && !isShortcut) return;
+
+    if (isShortcut) e.preventDefault();
 
     if (k === "r") {
       autoAdvance = false;
@@ -620,7 +648,7 @@ window.addEventListener(
       await tiltIntoOrbitPitch();
       headingDeg = 0;
       orbit = true;
-      e.preventDefault();
+      forceCanvasFocus();
       return;
     }
 
@@ -630,7 +658,7 @@ window.addEventListener(
       activeIndex = (activeIndex + 1) % entities.length;
       await goAboveSiteFlat();
       await zoomDownFlat();
-      e.preventDefault();
+      forceCanvasFocus();
       return;
     }
 
@@ -640,24 +668,24 @@ window.addEventListener(
       activeIndex = (activeIndex - 1 + entities.length) % entities.length;
       await goAboveSiteFlat();
       await zoomDownFlat();
-      e.preventDefault();
+      forceCanvasFocus();
       return;
     }
 
     if (k === "t") {
       autoAdvance = !autoAdvance;
+      orbit = false;
       if (autoAdvance) runTour();
-      e.preventDefault();
+      forceCanvasFocus();
       return;
     }
 
     if (k === "h") {
-  const help = document.getElementById("controlsHelp");
-  if (help) help.classList.toggle("controlsHelpHidden");
-  e.preventDefault();
-  return;
-  }
-    
+      controlsHidden = !controlsHidden;
+      setControlsHelpHidden(controlsHidden);
+      forceCanvasFocus();
+      return;
+    }
   },
-  true // 👈 capture mode (critical)
+  true
 );
