@@ -465,23 +465,94 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// DOUBLE-CLICK: disable Cesium default "zoom too close"
-// and use our siteRangeMeters instead
+// CHROME-SAFE "DOUBLE CLICK" + VISUAL HINT
+// - Chrome sometimes drops LEFT_DOUBLE_CLICK events.
+// - This uses LEFT_CLICK + timing so it works everywhere.
+// - Also shows a quick hint overlay.
 // =============================================================
 
+// Disable Cesium's default double click zoom (optional but recommended)
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
 
-const dblHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+// --- Hint overlay (created dynamically, no index.html changes) ---
+let dblHintTimeout = null;
 
-dblHandler.setInputAction((movement) => {
+function ensureDblHintEl() {
+  let el = document.getElementById("dblClickHint");
+  if (el) return el;
+
+  el = document.createElement("div");
+  el.id = "dblClickHint";
+  el.textContent = "Tip: Double click a site marker to zoom";
+
+  // Basic styling (safe, readable)
+  el.style.position = "absolute";
+  el.style.right = "12px";
+  el.style.top = "12px";
+  el.style.zIndex = "30";
+  el.style.maxWidth = "300px";
+  el.style.padding = "10px 12px";
+  el.style.borderRadius = "12px";
+  el.style.background = "rgba(0,0,0,0.72)";
+  el.style.color = "white";
+  el.style.fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+  el.style.fontSize = "13px";
+  el.style.lineHeight = "1.35";
+  el.style.pointerEvents = "none"; // don't block the map
+  el.style.opacity = "0";
+  el.style.transition = "opacity 250ms ease";
+
+  document.body.appendChild(el);
+  return el;
+}
+
+function showDblHint(ms = 4500) {
+  const el = ensureDblHintEl();
+
+  // cancel any existing hide timer
+  if (dblHintTimeout) clearTimeout(dblHintTimeout);
+
+  el.style.opacity = "1";
+  dblHintTimeout = setTimeout(() => {
+    el.style.opacity = "0";
+  }, ms);
+}
+
+// Show it once on load
+showDblHint(5500);
+
+// --- Manual double-click detector ---
+let lastClickAt = 0;
+const DOUBLE_CLICK_MS = 320;
+
+// We use LEFT_CLICK because it fires reliably in Chrome.
+// If the user clicks the same general time twice, treat it as a double click.
+const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+safeClickHandler.setInputAction((movement) => {
+  const now = performance.now();
+  const isDouble = (now - lastClickAt) < DOUBLE_CLICK_MS;
+  lastClickAt = now;
+
+  // If it's not a double click, we can optionally show the hint briefly
+  // when they clicked a marker (helps discovery)
+  if (!isDouble) {
+    const maybePicked = viewer.scene.pick(movement.position);
+    if (maybePicked && maybePicked.id && maybePicked.id.position) {
+      showDblHint(1800);
+    }
+    return;
+  }
+
+  // On a double click, pick the marker and fly to it
   const picked = viewer.scene.pick(movement.position);
-  if (!picked || !picked.id) return;
-  if (!picked.id.position) return;
+  if (!picked || !picked.id || !picked.id.position) return;
 
   flyToSite(picked.id);
-}, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
 
 // =============================================================
 // START (wait for CSV to load first)
