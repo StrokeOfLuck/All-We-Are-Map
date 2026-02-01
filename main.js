@@ -5,14 +5,6 @@
 const Cesium = window.Cesium;
 
 // ------------------------------------------------------------
-// ✅ RECOMMENDED: Cesium ion Bing Aerial (licensed, public-safe)
-// ------------------------------------------------------------
-// 1) Create a free Cesium ion account
-// 2) Make a token
-// 3) Paste it here
-Cesium.Ion.defaultAccessToken = "PASTE_YOUR_CESIUM_ION_TOKEN_HERE";
-
-// ------------------------------------------------------------
 // Viewer (NO default imagery)
 // ------------------------------------------------------------
 const viewer = new Cesium.Viewer("cesiumContainer", {
