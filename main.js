@@ -79,7 +79,7 @@ const overviewRangeMeters = 13500000; // how far OUT between sites (Uganda view)
 const siteRangeMeters = 1200;       // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 0.5;          // "move above next site" + "zoom out"
+const travelSeconds = 1.5;          // "move above next site" + "zoom out"
 const zoomInSeconds = 2.5;          // zooming down flat
 const tiltSeconds = 1.6;            // how fast it tilts into orbit pitch
 
@@ -128,7 +128,7 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
 
   return new Promise((resolve) => {
     viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 1.0), {
-      duration: durationSec/2,
+      duration: durationSec/4, //need this to move to sights faster
       offset,
       complete: () => {
         isFlying = false;
