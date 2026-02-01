@@ -83,6 +83,56 @@
       opacity: 0.8;
       margin-top: 2px;
     }
+
+    /* ===============================
+       Controls Help Overlay
+       =============================== */
+
+    .controlsHelp {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      z-index: 20;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.35;
+      max-width: 260px;
+      pointer-events: none; /* does not block map */
+    }
+
+    .controlsHelpTitle {
+      font-weight: 700;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .controlsHelpRow {
+      margin: 3px 0;
+    }
+
+    .controlsHelpHint {
+      margin-top: 8px;
+      opacity: 0.85;
+      font-size: 12px;
+    }
+
+    .kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      margin-right: 6px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      font-weight: 600;
+    }
+
+    .controlsHelpHidden {
+      display: none;
+    }
   </style>
 </head>
 
@@ -95,6 +145,18 @@
       <input id="siteSearch" placeholder="Search…" />
     </div>
     <div id="siteList"></div>
+  </div>
+
+  <!-- Controls overlay -->
+  <div id="controlsHelp" class="controlsHelp">
+    <div class="controlsHelpTitle">Controls</div>
+    <div class="controlsHelpRow"><span class="kbd">T</span> Toggle auto tour</div>
+    <div class="controlsHelpRow"><span class="kbd">R</span> Rotate current site</div>
+    <div class="controlsHelpRow"><span class="kbd">N</span> Next site</div>
+    <div class="controlsHelpRow"><span class="kbd">P</span> Previous site</div>
+    <div class="controlsHelpRow"><span class="kbd">Double click</span> Zoom to site</div>
+    <div class="controlsHelpRow"><span class="kbd">Click map</span> Stop tour</div>
+    <div class="controlsHelpHint">Press <span class="kbd">H</span> to hide/show</div>
   </div>
 
   <script>
