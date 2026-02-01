@@ -19,6 +19,21 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
 // -------------------------------
 // Basemap (pick ONE)
 // -------------------------------
+
+/*
+// -------------------------------
+// Add a FREE basemap (no tokens)
+// Option A (default): OpenTopoMap (reliable for testing)
+// -------------------------------
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
+
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -27,17 +42,19 @@ viewer.imageryLayers.addImageryProvider(
 );
 
 // =============================================================
-// SITES (loaded from sites.csv)
-// Your CSV has a column named "Coordinates" like: "LAT, LON"
-// Cesium needs: fromDegrees(LON, LAT)  (so we swap)
-// Also CSV has multiple rows per Customer ID (Year), so we dedupe:
-// keep the newest Year that has valid coordinates.
+// LOAD SITES FROM CSV (NO DEPENDENCIES)
+// CSV format (yours):
+// - Has a "Coordinates" column like: "0.360129..., 32.581690..."
+//   That is LAT, LON (backwards for Cesium)
+// - Cesium needs: fromDegrees(LON, LAT)
+// Also CSV has multiple rows per customer (Year), so we dedupe:
+// - Keep latest Year with valid coordinates
 // =============================================================
 
 const entities = [];
 const siteItems = []; // { name, customerId, lat, lon, entity }
 
-// Robust CSV parser (handles quoted fields + quoted commas)
+// Robust CSV parser that handles quoted fields + quoted commas
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -90,10 +107,9 @@ function toNum(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-// "Coordinates" cell is stored as: "LAT, LON"
+// Your CSV "Coordinates" is stored as: "LAT, LON"
 function parseCoordinatesLatLon(coordStr) {
   if (!coordStr) return null;
-
   const parts = String(coordStr)
     .replace(/^"+|"+$/g, "") // strip surrounding quotes if any
     .split(",")
@@ -123,7 +139,7 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  // Normalize headers (strip BOM too)
+  // Normalize headers
   const headers = rows[0].map((h) =>
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
@@ -138,7 +154,7 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  // Customer ID -> newest year with valid coords
+  // Deduplicate: Customer ID -> keep newest year with valid coords
   const bestByCustomer = new Map();
 
   for (let i = 1; i < rows.length; i++) {
@@ -160,18 +176,19 @@ async function buildEntitiesFromCSV() {
         : `Site ${customerId}`;
 
     const prev = bestByCustomer.get(customerId);
+
     if (!prev) {
       bestByCustomer.set(customerId, { name, year, coord });
       continue;
     }
 
-    // Keep the newer record by Year when possible
+    // If year exists, keep the newer record
     if (year != null && (prev.year == null || year > prev.year)) {
       bestByCustomer.set(customerId, { name, year, coord });
     }
   }
 
-  // Build Cesium entities
+  // Build Cesium entities + sidebar items
   for (const [customerId, item] of bestByCustomer.entries()) {
     const { lat, lon } = item.coord;
 
@@ -198,26 +215,26 @@ async function buildEntitiesFromCSV() {
 }
 
 // =============================================================
-// KNOBS YOU CARE ABOUT
+// KNOBS YOU CARE ABOUT (KEEPING YOUR UPDATED VALUES)
 // =============================================================
 
 // Camera distances
-const overviewRangeMeters = 450000; // how far OUT between sites (Uganda view)
-const siteRangeMeters = 1200;       // how close IN at the site
+const overviewRangeMeters = 2550000; // how far OUT between sites (Uganda view)
+const siteRangeMeters = 1200; // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 4.5;          // "move above next site" + "zoom out"
-const zoomInSeconds = 4.0;          // zooming down flat
-const tiltSeconds = 1.6;            // how fast it tilts into orbit pitch
+const travelSeconds = 1.5; // "move above next site" + "zoom out"
+const zoomInSeconds = 2.0; // zooming down flat
+const tiltSeconds = 1.6; // how fast it tilts into orbit pitch
 
 // Orbit behavior (ONLY while holding at the site)
-const orbitPitchDeg = -45;          // the tilt angle once at the site
-const orbitSpeedDegPerSec = 8;      // rotation speed at the site
-const holdSeconds = 6;              // how long to rotate at each site
+const orbitPitchDeg = -45; // the tilt angle once at the site
+const orbitSpeedDegPerSec = 8; // rotation speed at the site
+const holdSeconds = 3; // how long to rotate at each site
 
 // Flat travel orientation (north-up, no rotation)
-const flatHeadingDeg = 0;           // north-up
-const flatPitchDeg = -90;           // straight down
+const flatHeadingDeg = 0; // north-up
+const flatPitchDeg = -90; // straight down
 
 // Auto tour
 let autoAdvance = true;
@@ -226,7 +243,7 @@ let autoAdvance = true;
 // INTERNAL STATE
 // =============================================================
 let activeIndex = 0;
-let orbit = false;                 // IMPORTANT: orbit starts OFF (travel flat)
+let orbit = false; // IMPORTANT: orbit starts OFF (travel flat)
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
@@ -279,7 +296,7 @@ async function goAboveSiteFlat() {
     rangeMeters: overviewRangeMeters,
     pitchDeg: flatPitchDeg,
     headingDegValue: flatHeadingDeg,
-    durationSec: travelSeconds,
+    durationSec: travelSeconds / 2,
   });
 }
 
@@ -348,39 +365,32 @@ viewer.clock.onTick.addEventListener(() => {
 // =============================================================
 async function runTour() {
   while (autoAdvance) {
-    // 1) Move above current site flat
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
-    // 2) Zoom down flat
     await zoomDownFlat();
     if (!autoAdvance) break;
 
-    // 3) Tilt into orbit pitch
     await tiltIntoOrbitPitch();
     if (!autoAdvance) break;
 
-    // 4) Start rotating at site
     headingDeg = 0;
     orbit = true;
     await sleep(holdSeconds * 1000);
 
-    // 5) Stop rotating, tilt back flat
     orbit = false;
     await tiltBackToFlat();
     if (!autoAdvance) break;
 
-    // 6) Zoom out flat
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
-    // 7) Next site
     activeIndex = (activeIndex + 1) % entities.length;
   }
 }
 
 // =============================================================
-// SIDEBAR UI
+// SIDEBAR UI (list + search + click-to-fly)
 // =============================================================
 function flyToSite(entity) {
   autoAdvance = false;
@@ -389,11 +399,11 @@ function flyToSite(entity) {
   const pos = entity.position.getValue(Cesium.JulianDate.now());
 
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
-    duration: 1.6,
+    duration: 1.8,
     offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),
-      Cesium.Math.toRadians(flatPitchDeg),
-      siteRangeMeters
+      Cesium.Math.toRadians(0),           // north-up
+      Cesium.Math.toRadians(flatPitchDeg),// straight down
+      siteRangeMeters                     // your distance
     ),
   });
 }
@@ -434,28 +444,34 @@ function wireSearchBox() {
 // =============================================================
 // DOUBLE-CLICK: disable Cesium default "zoom too close"
 // and use our siteRangeMeters instead
+// (moved here so flatPitchDeg + siteRangeMeters already exist)
 // =============================================================
+
+// Disable the default zoom because it goes in too much for the images you're loading
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
 
+// Should let you double click to a set zoom distance
 const dblHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
 dblHandler.setInputAction((movement) => {
   const picked = viewer.scene.pick(movement.position);
   if (!picked || !picked.id) return;
 
-  const entity = picked.id;
-  if (!entity.position) return;
+  // Only fly if the thing clicked has a position (your points do)
+  if (!picked.id.position) return;
 
-  flyToSite(entity);
+  flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
 // =============================================================
-// START (load CSV first, then render UI, then start tour)
+// START (wait for CSV to load first)
 // =============================================================
 (async function init() {
   await buildEntitiesFromCSV();
 
+  // Sidebar list
   wireSearchBox();
   renderSiteList();
 
@@ -484,9 +500,9 @@ canvas.addEventListener("mousedown", () => {
 canvas.addEventListener("keydown", async (e) => {
   const k = e.key.toLowerCase();
 
-  // R = resume orbit at current site
+  // R = resume orbit at current site (tilt first, then orbit)
   if (k === "r") {
-    autoAdvance = false;
+    autoAdvance = false; // manual mode
     orbit = false;
     await zoomDownFlat();
     await tiltIntoOrbitPitch();
@@ -495,7 +511,7 @@ canvas.addEventListener("keydown", async (e) => {
     e.preventDefault();
   }
 
-  // N = next site
+  // N = next site (flat travel sequence, no orbit until you press R or restart tour)
   if (k === "n") {
     autoAdvance = false;
     orbit = false;
