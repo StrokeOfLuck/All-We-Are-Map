@@ -159,6 +159,32 @@
       pointer-events: none;
     }
 
+    #helpCloseBtn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+
+  border: none;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  pointer-events: auto; /* allow clicking */
+}
+
+#helpCloseBtn:hover {
+  background: rgba(255,255,255,0.22);
+}
+
     #controlsHelp .helpTitle {
       font-weight: 700;
       margin-bottom: 8px;
@@ -213,10 +239,13 @@
 
   <!-- Help box -->
 <div id="controlsHelp">
+  <button id="helpCloseBtn" aria-label="Close help">✕</button>
+
   <div class="helpTitle">Controls</div>
   <div style="opacity:0.9; margin-bottom:6px;">
     Tip: double-click a site marker to zoom
   </div>
+  <ul>
 
   <ul>
     <li><b>🖱</b> Left click + drag → pan</li>
