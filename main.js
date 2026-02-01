@@ -51,7 +51,7 @@ viewer.imageryLayers.addImageryProvider(
 // =============================================================
 
 // Camera distances
-const overviewRangeMeters = 2550000; // how far OUT between sites
+const overviewRangeMeters = 2000000; // how far OUT between sites
 const siteRangeMeters = 1200; // how close IN at the site
 
 // Travel behavior
