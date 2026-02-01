@@ -17,13 +17,14 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     }
 
+    /* Force Cesium behind UI */
     #cesiumContainer {
       position: absolute;
       inset: 0;
+      z-index: 0;
     }
 
     /* ================= Sidebar ================= */
-
     #sidebar {
       position: absolute;
       top: 12px;
@@ -34,15 +35,23 @@
       color: white;
       border-radius: 12px;
       overflow: hidden;
-      z-index: 40; /* make sure it stays clickable above Cesium */
+
+      /* CRITICAL: keep it above Cesium and clickable */
+      z-index: 1000;
+      pointer-events: auto;
+
       display: flex;
       flex-direction: column;
       backdrop-filter: blur(6px);
       transition: transform 0.25s ease;
+    }
+
+    /* Make sure all sidebar children can receive clicks */
+    #sidebar * {
       pointer-events: auto;
     }
 
-    /* Closed state (mobile default + toggle) */
+    /* Closed state (used by your main.js toggle) */
     #sidebar.sidebarClosed {
       transform: translateX(-110%);
     }
@@ -52,9 +61,34 @@
       border-bottom: 1px solid rgba(255,255,255,0.12);
     }
 
+    .headerRow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
     .title {
       font-weight: 700;
-      margin-bottom: 8px;
+      margin: 0;
+    }
+
+    /* Menu toggle button lives in header now */
+    #menuToggle {
+      position: static;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(0,0,0,0.25);
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
     }
 
     #siteSearch {
@@ -74,8 +108,28 @@
       -webkit-overflow-scrolling: touch;
     }
 
-    /* ================= Controls Help ================= */
+    /* Rows (so they feel clickable) */
+    .siteRow {
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      margin: 4px 0;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      touch-action: manipulation;
+    }
 
+    .siteRow:hover {
+      background: rgba(255,255,255,0.10);
+    }
+
+    .siteSub {
+      font-size: 12px;
+      opacity: 0.8;
+      margin-top: 2px;
+    }
+
+    /* ================= Controls Help ================= */
     #controlsHelp {
       position: absolute;
       right: 12px;
@@ -95,7 +149,6 @@
       pointer-events: none; /* doesn't block the map */
     }
 
-    /* Only the top "Controls" header should be block */
     #controlsHelp .helpTitle {
       font-weight: 700;
       margin-bottom: 8px;
@@ -106,7 +159,7 @@
       padding: 0;
     }
 
-    /* Keep shortcut letter + sentence on ONE line */
+    /* Keep shortcut letter + sentence on one line */
     #controlsHelp li {
       margin: 6px 0;
       display: flex;
@@ -123,28 +176,7 @@
       display: none;
     }
 
-    /* ================= Menu Toggle Button ================= */
-
-    #menuToggle {
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      z-index: 50; /* above sidebar */
-      width: 44px;
-      height: 44px;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(20,20,20,0.85);
-      color: #fff;
-      font-size: 22px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      pointer-events: auto;
-    }
-
-    /* Hide the help box on mobile/touch */
+    /* Hide help box on mobile/touch */
     @media (max-width: 768px), (hover: none), (pointer: coarse) {
       #controlsHelp {
         display: none;
@@ -156,25 +188,18 @@
 <body>
   <div id="cesiumContainer"></div>
 
-  <!-- Toggle button -->
-  <div class="sidebar-header">
-  <div class="headerRow">
-    <div class="title">Locations</div>
-    <button id="menuToggle" type="button" aria-label="Toggle locations menu">✕</button>
-  </div>
-  <input id="siteSearch" placeholder="Search…" />
-</div>
-
-  <!-- Sidebar -->
   <div id="sidebar">
     <div class="sidebar-header">
-      <div class="title">Locations</div>
+      <div class="headerRow">
+        <div class="title">Locations</div>
+        <button id="menuToggle" type="button" aria-label="Toggle locations menu">✕</button>
+      </div>
       <input id="siteSearch" placeholder="Search…" />
     </div>
+
     <div id="siteList"></div>
   </div>
 
-  <!-- Visible instructions (toggle with H) -->
   <div id="controlsHelp">
     <div class="helpTitle">Controls</div>
     <div>Tip: double click a site marker to zoom</div>
@@ -182,18 +207,4 @@
       <li><b>T</b> toggle auto tour</li>
       <li><b>R</b> rotate at current site</li>
       <li><b>N</b> next site</li>
-      <li><b>P</b> previous site</li>
-      <li><b>H</b> hide/show this help</li>
-      <li>Click and drag the map to take control (stops tour/rotation)</li>
-      <li>Mouse wheel / trackpad scroll also stops tour/rotation</li>
-    </ul>
-  </div>
-
-  <script>
-    window.CESIUM_BASE_URL = "./Build/Cesium/";
-  </script>
-
-  <script src="./Build/Cesium/Cesium.js"></script>
-  <script src="./main.js"></script>
-</body>
-</html>
+      <li><
