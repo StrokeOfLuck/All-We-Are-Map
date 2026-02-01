@@ -380,8 +380,12 @@ async function buildEntitiesFromCSV() {
       model: {
         uri: "./models/cc0_light_bulb.glb",
         minimumPixelSize: 2000,
-        maximumScale: 20000,
+        maximumScale: 5000,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+
+        color: Cesium.Color.YELLOW.withAlpha(0.85),
+        colorBlendMode: Cesium.ColorBlendMode.MIX,
+        colorBlendAmount: 0.6,
       },
     });
 
