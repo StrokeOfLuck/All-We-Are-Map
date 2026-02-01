@@ -691,7 +691,7 @@ function updateTourButton() {
   if (!btn) return;
 
   // ⏸ when running, ▶ when paused
-  btn.textContent = autoAdvance ? "⏸" : "▶";
+  btn.textContent = autoAdvance ? "❚❚" : "▶";
   btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
 }
 
