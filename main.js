@@ -513,5 +513,45 @@ document.addEventListener(
     return;
   }
 
+  // ===== Mobile sidebar toggle (UI ONLY – safe) =====
+(function () {
+  const sidebar = document.getElementById("sidebar");
+  const menuToggle = document.getElementById("menuToggle");
+  const cesium = document.getElementById("cesiumContainer");
+
+  if (!sidebar || !menuToggle) return;
+
+  const isMobile = () => window.matchMedia("(max-width: 768px)").matches;
+
+  const updateIcon = () => {
+    menuToggle.textContent = sidebar.classList.contains("open") ? "✕" : "☰";
+  };
+
+  menuToggle.addEventListener("click", (e) => {
+    if (!isMobile()) return;
+    e.stopPropagation();
+    sidebar.classList.toggle("open");
+    updateIcon();
+  });
+
+  if (cesium) {
+    cesium.addEventListener("pointerdown", () => {
+      if (isMobile()) {
+        sidebar.classList.remove("open");
+        updateIcon();
+      }
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    if (!isMobile()) {
+      sidebar.classList.remove("open");
+    }
+    updateIcon();
+  });
+
+  updateIcon();
+})();
+
   runTour();
 })();
