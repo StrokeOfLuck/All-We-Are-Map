@@ -380,7 +380,7 @@ async function buildEntitiesFromCSV() {
 
     // ✅ Yellow circle that stays visible at any distance
     point: {
-      pixelSize: 20,                         // dot size on screen
+      pixelSize: 10,                         // dot size on screen
       color: Cesium.Color.YELLOW,
       outlineColor: Cesium.Color.BLACK,
       outlineWidth: 3,
