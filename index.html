@@ -122,11 +122,68 @@
     .controlsHelpHidden {
       display: none;
     }
+
+    /* ===============================
+       Mobile menu button + mobile UX
+       =============================== */
+
+    /* Mobile menu button */
+    #menuToggle {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 30;
+
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(20,20,20,0.85);
+      color: #fff;
+      font-size: 22px;
+      cursor: pointer;
+
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Mobile behavior: sidebar collapses, help auto-hides */
+    @media (max-width: 768px) {
+      #menuToggle {
+        display: inline-flex;
+      }
+
+      #sidebar {
+        transform: translateX(-110%);
+        transition: transform 0.25s ease;
+      }
+
+      #sidebar.open {
+        transform: translateX(0);
+      }
+
+      /* Auto-hide the help overlay on phones */
+      #controlsHelp {
+        display: none;
+      }
+    }
+
+    /* Also hide help on touch devices even if wide */
+    @media (hover: none), (pointer: coarse) {
+      #controlsHelp {
+        display: none;
+      }
+    }
   </style>
 </head>
 
 <body>
   <div id="cesiumContainer"></div>
+
+  <!-- Mobile menu button (shows on phones) -->
+  <button id="menuToggle" aria-label="Open menu">☰</button>
 
   <div id="sidebar">
     <div class="sidebar-header">
@@ -136,7 +193,7 @@
     <div id="siteList"></div>
   </div>
 
-  <!-- Visible instructions (toggle with H) -->
+  <!-- Visible instructions (toggle with H on desktop) -->
   <div id="controlsHelp">
     <div class="helpTitle">Controls</div>
     <div>Tip: double click a site marker to zoom</div>
