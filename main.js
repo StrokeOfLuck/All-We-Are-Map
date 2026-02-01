@@ -19,6 +19,19 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
 // -------------------------------
 // Basemap (pick ONE)
 // -------------------------------
+/*
+// -------------------------------
+// Add a FREE basemap (no tokens)
+// Option A (default): OpenTopoMap (reliable for testing)
+// -------------------------------
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -66,14 +79,14 @@ const overviewRangeMeters = 13500000; // how far OUT between sites (Uganda view)
 const siteRangeMeters = 1200;       // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 4.5;          // "move above next site" + "zoom out"
-const zoomInSeconds = 4.0;          // zooming down flat
+const travelSeconds = 2.5;          // "move above next site" + "zoom out"
+const zoomInSeconds = 2.5;          // zooming down flat
 const tiltSeconds = 1.6;            // how fast it tilts into orbit pitch
 
 // Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;          // the tilt angle once at the site
 const orbitSpeedDegPerSec = 8;      // rotation speed at the site
-const holdSeconds = 6;              // how long to rotate at each site
+const holdSeconds = 3;              // how long to rotate at each site
 
 // Flat travel orientation (north-up, no rotation)
 const flatHeadingDeg = 0;           // north-up
@@ -115,7 +128,7 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
 
   return new Promise((resolve) => {
     viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 1.0), {
-      duration: durationSec,
+      duration: durationSec/2, //need this to move to sights faster
       offset,
       complete: () => {
         isFlying = false;
