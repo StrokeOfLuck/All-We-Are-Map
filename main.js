@@ -431,8 +431,7 @@ async function buildEntitiesFromCSV() {
 // SIDEBAR UI
 // =============================================================
 function flyToSite(entity) {
-  autoAdvance = false;
-  orbit = false;
+  stopAutoTour("site click");
 
   setActiveIndexFromEntity(entity);
 
@@ -579,9 +578,7 @@ window.addEventListener(
     if (entities.length === 0) return;
 
     if (k === "r") {
-      autoAdvance = false;
-      orbit = false;
-
+      stopAutoTour("keyboard");
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
       await zoomDownFlat();
@@ -594,8 +591,7 @@ window.addEventListener(
     }
 
     if (k === "n") {
-      autoAdvance = false;
-      orbit = false;
+      stopAutoTour("keyboard");
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
       activeIndex = (activeIndex + 1) % entities.length;
@@ -607,8 +603,7 @@ window.addEventListener(
     }
 
     if (k === "p") {
-      autoAdvance = false;
-      orbit = false;
+      stopAutoTour("keyboard");
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
       activeIndex = (activeIndex - 1 + entities.length) % entities.length;
@@ -620,8 +615,7 @@ window.addEventListener(
     }
 
     if (k === "t") {
-      orbit = false;
-      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+      stopAutoTour("keyboard");;
 
       autoAdvance = !autoAdvance;
       if (autoAdvance) runTour();
@@ -723,6 +717,15 @@ function updateTourButton() {
     sidebar.classList.toggle("sidebarClosed");
     updateMenuButton();
   }
+
+  // =============================================================
+// AUTO TOUR STATE SYNC (single source of truth)
+// =============================================================
+function stopAutoTour(reason = "") {
+  stopAutoTour("map interaction");
+  tourRunId++; // invalidate any running tour loop
+  updateTourButton();
+}
 
   // menu button always visible
   menuBtn.addEventListener("click", (e) => {
