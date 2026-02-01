@@ -393,7 +393,7 @@ async function buildEntitiesFromCSV() {
       scale: 1000.0,
     
       heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
-      height: 5000, // meters above ground (try 3, 8, 15)
+      height: 9999999999999999999999999, // meters above ground (try 3, 8, 15)
     
       shadows: Cesium.ShadowMode.DISABLED,
     },
