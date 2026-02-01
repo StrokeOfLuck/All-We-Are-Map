@@ -519,18 +519,27 @@ canvas.addEventListener("mousedown", () => {
 // But do NOT hijack keys while typing in the search input.
 window.addEventListener("keydown", async (e) => {
   const active = document.activeElement;
-  const tag = active ? active.tagName : "";
-  const id = active ? active.id : "";
-
-  // If you're typing in the search box, don't capture keys
-  if (tag === "INPUT" || tag === "TEXTAREA") return;
-
-  // Also avoid grabbing keys if focus is in our search input specifically
-  if (id === "siteSearch") return;
+  const isSearchFocused = active && active.id === "siteSearch";
 
   const k = e.key.toLowerCase();
+  const isShortcut = k === "r" || k === "t" || k === "n" || k === "p";
 
-  // R = resume orbit at current site (tilt first, then orbit)
+  // If search is focused:
+  // - allow normal typing
+  // - but still allow our shortcut keys
+  if (isSearchFocused && !isShortcut) return;
+
+  // If a shortcut key is pressed while search is focused, blur it so keys "resume"
+  if (isSearchFocused && isShortcut) {
+    active.blur();
+    canvas.focus();
+  }
+
+  // If any other input/textarea is focused, don't hijack typing
+  const tag = active ? active.tagName : "";
+  if ((tag === "INPUT" || tag === "TEXTAREA") && !isShortcut) return;
+
+  // --- shortcuts ---
   if (k === "r") {
     autoAdvance = false;
     orbit = false;
@@ -542,7 +551,6 @@ window.addEventListener("keydown", async (e) => {
     return;
   }
 
-  // N = next site
   if (k === "n") {
     autoAdvance = false;
     orbit = false;
@@ -553,7 +561,6 @@ window.addEventListener("keydown", async (e) => {
     return;
   }
 
-  // P = previous site
   if (k === "p") {
     autoAdvance = false;
     orbit = false;
@@ -564,7 +571,6 @@ window.addEventListener("keydown", async (e) => {
     return;
   }
 
-  // T = toggle auto tour
   if (k === "t") {
     autoAdvance = !autoAdvance;
     if (autoAdvance) runTour();
@@ -572,3 +578,5 @@ window.addEventListener("keydown", async (e) => {
     return;
   }
 });
+
+
