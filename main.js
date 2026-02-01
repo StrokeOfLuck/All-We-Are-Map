@@ -128,7 +128,7 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
 
   return new Promise((resolve) => {
     viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 1.0), {
-      duration: durationSec/4, //need this to move to sights faster
+      duration: durationSec/3, //need this to move to sights faster
       offset,
       complete: () => {
         isFlying = false;
