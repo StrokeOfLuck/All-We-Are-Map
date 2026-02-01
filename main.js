@@ -393,21 +393,35 @@ async function runTour() {
 // =============================================================
 // SIDEBAR UI (list + search + click-to-fly)
 // =============================================================
+
+function setActiveIndexFromEntity(entity) {
+  const idx = entities.indexOf(entity);
+  if (idx !== -1) activeIndex = idx;
+}
+
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
+
+  // Make this the active site so R/T/N/P work from here
+  setActiveIndexFromEntity(entity);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
 
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.8,
     offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),           // north-up
-      Cesium.Math.toRadians(flatPitchDeg),// straight down
-      siteRangeMeters                     // your distance
+      Cesium.Math.toRadians(0),            // north-up
+      Cesium.Math.toRadians(flatPitchDeg), // straight down
+      siteRangeMeters                      // your distance
     ),
+    complete: () => {
+      // After clicking list/search, put focus back on canvas so scroll feels normal
+      canvas.focus();
+    },
   });
 }
+
 
 function renderSiteList(filterText = "") {
   const listEl = document.getElementById("siteList");
@@ -496,23 +510,39 @@ canvas.addEventListener("mousedown", () => {
   autoAdvance = false;
   orbit = false;
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+  // keep focus on canvas after clicks on globe
+  canvas.focus();
 });
 
-canvas.addEventListener("keydown", async (e) => {
+// Keyboard shortcuts should work even after clicking the sidebar.
+// But do NOT hijack keys while typing in the search input.
+window.addEventListener("keydown", async (e) => {
+  const active = document.activeElement;
+  const tag = active ? active.tagName : "";
+  const id = active ? active.id : "";
+
+  // If you're typing in the search box, don't capture keys
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+  // Also avoid grabbing keys if focus is in our search input specifically
+  if (id === "siteSearch") return;
+
   const k = e.key.toLowerCase();
 
   // R = resume orbit at current site (tilt first, then orbit)
   if (k === "r") {
-    autoAdvance = false; // manual mode
+    autoAdvance = false;
     orbit = false;
     await zoomDownFlat();
     await tiltIntoOrbitPitch();
     headingDeg = 0;
     orbit = true;
     e.preventDefault();
+    return;
   }
 
-  // N = next site (flat travel sequence, no orbit until you press R or restart tour)
+  // N = next site
   if (k === "n") {
     autoAdvance = false;
     orbit = false;
@@ -520,6 +550,7 @@ canvas.addEventListener("keydown", async (e) => {
     await goAboveSiteFlat();
     await zoomDownFlat();
     e.preventDefault();
+    return;
   }
 
   // P = previous site
@@ -530,6 +561,7 @@ canvas.addEventListener("keydown", async (e) => {
     await goAboveSiteFlat();
     await zoomDownFlat();
     e.preventDefault();
+    return;
   }
 
   // T = toggle auto tour
@@ -537,5 +569,6 @@ canvas.addEventListener("keydown", async (e) => {
     autoAdvance = !autoAdvance;
     if (autoAdvance) runTour();
     e.preventDefault();
+    return;
   }
 });
