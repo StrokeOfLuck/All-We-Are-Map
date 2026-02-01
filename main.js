@@ -375,28 +375,17 @@ async function buildEntitiesFromCSV() {
     const { lat, lon } = item.coord;
     
     const entity = viewer.entities.add({
-      name: item.name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat),
-      model: {
-        uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
-      
-        // REMOVE minimumPixelSize (this is the usual culprit for “giant stuff”)
-        // minimumPixelSize: 100,
-      
-        // Use a sane real-world-ish scale instead
-        scale: 10.0,          // try 0.2, 0.5, 1, 2
-       // maximumScale: 1000,    // keep this small (or remove it)
-      
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-      
-        // Optional: if the model is casting weird shadow artifacts
-        shadows: Cesium.ShadowMode.DISABLED,
-        /*
-        color: Cesium.Color.YELLOW.withAlpha(0.85),
-        colorBlendMode: Cesium.ColorBlendMode.MIX,
-        colorBlendAmount: 0.6,
-        */
-      },
+    name: item.name,
+    position: Cesium.Cartesian3.fromDegrees(lon, lat),
+    model: {
+      uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
+      scale: 100.0,
+    
+      heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
+      height: 8, // meters above ground (try 3, 8, 15)
+    
+      shadows: Cesium.ShadowMode.DISABLED,
+    },
     });
 
     entities.push(entity);
