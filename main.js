@@ -379,13 +379,14 @@ async function buildEntitiesFromCSV() {
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
       model: {
         uri: "./models/cc0_light_bulb.glb",
-        minimumPixelSize: 1000,
-        maximumScale: 2000,
+        minimumPixelSize: 100,
+        maximumScale: 200,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-
+        /*
         color: Cesium.Color.YELLOW.withAlpha(0.85),
         colorBlendMode: Cesium.ColorBlendMode.MIX,
         colorBlendAmount: 0.6,
+        */
       },
     });
 
