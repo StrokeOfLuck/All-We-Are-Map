@@ -641,6 +641,7 @@ window.addEventListener(
   function setToggleIcon() {
     const isClosed = sidebar.classList.contains("sidebarClosed");
     toggle.textContent = isClosed ? "☰" : "✕";
+    toggle.setAttribute("aria-label", isClosed ? "Open locations menu" : "Close locations menu");
   }
 
   function setInitialState() {
@@ -650,13 +651,19 @@ window.addEventListener(
     setToggleIcon();
   }
 
-  toggle.addEventListener("click", (e) => {
-    e.stopPropagation();
+  // IMPORTANT: keep menu clickable (prevent events from reaching the map)
+  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
+  toggle.addEventListener("pointerdown", (e) => e.stopPropagation());
+  toggle.addEventListener("click", (e) => e.stopPropagation());
+
+  // Toggle open/close
+  toggle.addEventListener("click", () => {
     sidebar.classList.toggle("sidebarClosed");
     setToggleIcon();
   });
 
-  // Optional nice UX: tapping the map closes the menu on mobile
+  // Optional UX: tapping the map closes the menu on mobile
   if (map) {
     map.addEventListener("pointerdown", () => {
       if (mqMobile.matches) {
@@ -666,8 +673,9 @@ window.addEventListener(
     });
   }
 
-  // If you resize/rotate, keep the rule: desktop open, mobile closed
-  mqMobile.addEventListener("change", setInitialState);
+  // Keep rule on resize/rotate
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", setInitialState);
+  else window.addEventListener("resize", setInitialState);
 
   setInitialState();
 })();
