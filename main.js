@@ -751,6 +751,20 @@ function updateTourButton() {
 })();
 
 // =============================================================
+// Help box close button (X) - runs once
+// =============================================================
+(function wireHelpCloseButton() {
+  const help = document.getElementById("controlsHelp");
+  const closeBtn = document.getElementById("helpCloseBtn");
+  if (!help || !closeBtn) return;
+
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    help.classList.add("controlsHelpHidden");
+  });
+})();
+
+// =============================================================
 // START
 // =============================================================
 (async function init() {
