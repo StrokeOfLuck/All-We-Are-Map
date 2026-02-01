@@ -474,7 +474,17 @@ function renderSiteList(filterText = "") {
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
     `;
-    row.addEventListener("click", () => flyToSite(s.entity));
+        // Use pointerup so taps work reliably on mobile (click can fail when scrolling)
+    row.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+    });
+    
+    row.addEventListener("pointerup", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      flyToSite(s.entity);
+    }, { passive: false });
+
     listEl.appendChild(row);
   });
 }
