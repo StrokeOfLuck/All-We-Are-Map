@@ -19,6 +19,19 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
 // -------------------------------
 // Basemap (pick ONE)
 // -------------------------------
+/*
+// -------------------------------
+// Add a FREE basemap (no tokens)
+// Option A (default): OpenTopoMap (reliable for testing)
+// -------------------------------
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
