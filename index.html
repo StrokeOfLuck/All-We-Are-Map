@@ -34,14 +34,15 @@
       color: white;
       border-radius: 12px;
       overflow: hidden;
-      z-index: 10;
+      z-index: 40; /* make sure it stays clickable above Cesium */
       display: flex;
       flex-direction: column;
       backdrop-filter: blur(6px);
       transition: transform 0.25s ease;
+      pointer-events: auto;
     }
 
-    /* Closed state (used on mobile + toggle) */
+    /* Closed state (mobile default + toggle) */
     #sidebar.sidebarClosed {
       transform: translateX(-110%);
     }
@@ -70,6 +71,7 @@
     #siteList {
       overflow: auto;
       padding: 6px;
+      -webkit-overflow-scrolling: touch;
     }
 
     /* ================= Controls Help ================= */
@@ -81,20 +83,44 @@
       z-index: 20;
       width: 320px;
       max-width: calc(100% - 24px);
-      background: rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.70);
       color: #fff;
       border-radius: 12px;
       padding: 12px;
       font-size: 13px;
       line-height: 1.35;
+      backdrop-filter: blur(6px);
       border: 1px solid rgba(255,255,255,0.12);
-      pointer-events: none;
       user-select: none;
+      pointer-events: none; /* doesn't block the map */
     }
 
-    #controlsHelp b {
-      display: block;
-      margin-bottom: 6px;
+    /* Only the top "Controls" header should be block */
+    #controlsHelp .helpTitle {
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    #controlsHelp ul {
+      margin: 8px 0 0 18px;
+      padding: 0;
+    }
+
+    /* Keep shortcut letter + sentence on ONE line */
+    #controlsHelp li {
+      margin: 6px 0;
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    #controlsHelp li b {
+      display: inline;
+      min-width: 16px;
+    }
+
+    .controlsHelpHidden {
+      display: none;
     }
 
     /* ================= Menu Toggle Button ================= */
@@ -103,26 +129,22 @@
       position: absolute;
       top: 12px;
       left: 12px;
-      z-index: 30;
-
+      z-index: 50; /* above sidebar */
       width: 44px;
       height: 44px;
       border-radius: 12px;
-
       border: 1px solid rgba(255,255,255,0.15);
       background: rgba(20,20,20,0.85);
       color: #fff;
       font-size: 22px;
       cursor: pointer;
-
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      pointer-events: auto;
     }
 
-    /* ================= Mobile Cleanup ================= */
-
-    /* Hide the help box on mobile & touch devices */
+    /* Hide the help box on mobile/touch */
     @media (max-width: 768px), (hover: none), (pointer: coarse) {
       #controlsHelp {
         display: none;
@@ -134,7 +156,7 @@
 <body>
   <div id="cesiumContainer"></div>
 
-  <!-- Toggle button (used on desktop + mobile) -->
+  <!-- Toggle button -->
   <button id="menuToggle" type="button" aria-label="Toggle locations menu">☰</button>
 
   <!-- Sidebar -->
@@ -146,18 +168,18 @@
     <div id="siteList"></div>
   </div>
 
-  <!-- Controls help (desktop only) -->
+  <!-- Visible instructions (toggle with H) -->
   <div id="controlsHelp">
-    <b>Controls</b>
-    Tip: double click a site marker to zoom
+    <div class="helpTitle">Controls</div>
+    <div>Tip: double click a site marker to zoom</div>
     <ul>
       <li><b>T</b> toggle auto tour</li>
       <li><b>R</b> rotate at current site</li>
       <li><b>N</b> next site</li>
       <li><b>P</b> previous site</li>
       <li><b>H</b> hide/show this help</li>
-      <li>Click and drag the map to take control</li>
-      <li>Mouse wheel / trackpad scroll stops tour</li>
+      <li>Click and drag the map to take control (stops tour/rotation)</li>
+      <li>Mouse wheel / trackpad scroll also stops tour/rotation</li>
     </ul>
   </div>
 
