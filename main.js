@@ -384,7 +384,7 @@ async function buildEntitiesFromCSV() {
         // minimumPixelSize: 100,
       
         // Use a sane real-world-ish scale instead
-        scale: 5.0,          // try 0.2, 0.5, 1, 2
+        scale: 10.0,          // try 0.2, 0.5, 1, 2
        // maximumScale: 1000,    // keep this small (or remove it)
       
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
