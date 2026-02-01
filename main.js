@@ -378,6 +378,38 @@ async function buildEntitiesFromCSV() {
     name: item.name,
     position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
+    point: {
+      pixelSize: 4,
+      color: Cesium.Color.YELLOW,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 2,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
+    },
+    
+    billboard: {
+      image: "./icons/solar_pin.png",
+      width: 28,
+      height: 28,
+      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      scaleByDistance: new Cesium.NearFarScalar(1_000, 1.0, 5_000_000, 0.25),
+    },
+    
+    label: {
+      text: item.name,
+      font: "14px sans-serif",
+      fillColor: Cesium.Color.WHITE,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 4,
+      showBackground: true,
+      backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+      pixelOffset: new Cesium.Cartesian2(0, -32),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250000),
+    },
+      
+    /*
     // ✅ Yellow circle that stays visible at any distance
     point: {
       pixelSize: 5,                         // dot size on screen
@@ -387,6 +419,8 @@ async function buildEntitiesFromCSV() {
       disableDepthTestDistance: Number.POSITIVE_INFINITY, // draw on top of terrain
       distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7), // show far away
     },
+    */
+      
       /*
     model: {
       uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
