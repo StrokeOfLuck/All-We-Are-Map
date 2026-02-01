@@ -399,6 +399,13 @@ function setActiveIndexFromEntity(entity) {
   if (idx !== -1) activeIndex = idx;
 }
 
+// Force keyboard focus back to Cesium after sidebar interactions
+function forceCanvasFocus() {
+  const input = document.getElementById("siteSearch");
+  if (input) input.blur();
+  if (viewer && viewer.scene && viewer.scene.canvas) viewer.scene.canvas.focus();
+}
+
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
@@ -406,22 +413,20 @@ function flyToSite(entity) {
   // Make this the active site so R/T/N/P work from here
   setActiveIndexFromEntity(entity);
 
+  // After clicking list/search, put focus back on canvas so keys work
+  forceCanvasFocus();
+
   const pos = entity.position.getValue(Cesium.JulianDate.now());
 
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.8,
     offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),            // north-up
+      Cesium.Math.toRadians(0), // north-up
       Cesium.Math.toRadians(flatPitchDeg), // straight down
-      siteRangeMeters                      // your distance
+      siteRangeMeters // your distance
     ),
-    complete: () => {
-      // After clicking list/search, put focus back on canvas so scroll feels normal
-      canvas.focus();
-    },
   });
 }
-
 
 function renderSiteList(filterText = "") {
   const listEl = document.getElementById("siteList");
@@ -445,7 +450,10 @@ function renderSiteList(filterText = "") {
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
     `;
-    row.addEventListener("click", () => flyToSite(s.entity));
+    row.addEventListener("click", () => {
+      forceCanvasFocus();
+      flyToSite(s.entity);
+    });
     listEl.appendChild(row);
   });
 }
@@ -459,22 +467,17 @@ function wireSearchBox() {
 // =============================================================
 // DOUBLE-CLICK: disable Cesium default "zoom too close"
 // and use our siteRangeMeters instead
-// (moved here so flatPitchDeg + siteRangeMeters already exist)
 // =============================================================
 
-// Disable the default zoom because it goes in too much for the images you're loading
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
 
-// Should let you double click to a set zoom distance
 const dblHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
 dblHandler.setInputAction((movement) => {
   const picked = viewer.scene.pick(movement.position);
   if (!picked || !picked.id) return;
-
-  // Only fly if the thing clicked has a position (your points do)
   if (!picked.id.position) return;
 
   flyToSite(picked.id);
@@ -510,73 +513,72 @@ canvas.addEventListener("mousedown", () => {
   autoAdvance = false;
   orbit = false;
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-  // keep focus on canvas after clicks on globe
   canvas.focus();
 });
 
-// Keyboard shortcuts should work even after clicking the sidebar.
-// But do NOT hijack keys while typing in the search input.
-window.addEventListener("keydown", async (e) => {
-  const active = document.activeElement;
-  const isSearchFocused = active && active.id === "siteSearch";
+// Keyboard shortcuts that still work after clicking the sidebar.
+// Use CAPTURE mode so nothing else can swallow the event first.
+window.addEventListener(
+  "keydown",
+  async (e) => {
+    const active = document.activeElement;
+    const isSearchFocused = active && active.id === "siteSearch";
 
-  const k = e.key.toLowerCase();
-  const isShortcut = k === "r" || k === "t" || k === "n" || k === "p";
+    const k = e.key.toLowerCase();
+    const isShortcut = k === "r" || k === "t" || k === "n" || k === "p";
 
-  // If search is focused:
-  // - allow normal typing
-  // - but still allow our shortcut keys
-  if (isSearchFocused && !isShortcut) return;
+    // If search is focused:
+    // - allow normal typing
+    // - but still allow our shortcut keys
+    if (isSearchFocused && !isShortcut) return;
 
-  // If a shortcut key is pressed while search is focused, blur it so keys "resume"
-  if (isSearchFocused && isShortcut) {
-    active.blur();
-    canvas.focus();
-  }
+    // If a shortcut key is pressed while search is focused, blur it so keys "resume"
+    if (isSearchFocused && isShortcut) {
+      active.blur();
+      canvas.focus();
+    }
 
-  // If any other input/textarea is focused, don't hijack typing
-  const tag = active ? active.tagName : "";
-  if ((tag === "INPUT" || tag === "TEXTAREA") && !isShortcut) return;
+    // If any other input/textarea is focused, don't hijack typing
+    const tag = active ? active.tagName : "";
+    if ((tag === "INPUT" || tag === "TEXTAREA") && !isShortcut) return;
 
-  // --- shortcuts ---
-  if (k === "r") {
-    autoAdvance = false;
-    orbit = false;
-    await zoomDownFlat();
-    await tiltIntoOrbitPitch();
-    headingDeg = 0;
-    orbit = true;
-    e.preventDefault();
-    return;
-  }
+    if (k === "r") {
+      autoAdvance = false;
+      orbit = false;
+      await zoomDownFlat();
+      await tiltIntoOrbitPitch();
+      headingDeg = 0;
+      orbit = true;
+      e.preventDefault();
+      return;
+    }
 
-  if (k === "n") {
-    autoAdvance = false;
-    orbit = false;
-    activeIndex = (activeIndex + 1) % entities.length;
-    await goAboveSiteFlat();
-    await zoomDownFlat();
-    e.preventDefault();
-    return;
-  }
+    if (k === "n") {
+      autoAdvance = false;
+      orbit = false;
+      activeIndex = (activeIndex + 1) % entities.length;
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+      e.preventDefault();
+      return;
+    }
 
-  if (k === "p") {
-    autoAdvance = false;
-    orbit = false;
-    activeIndex = (activeIndex - 1 + entities.length) % entities.length;
-    await goAboveSiteFlat();
-    await zoomDownFlat();
-    e.preventDefault();
-    return;
-  }
+    if (k === "p") {
+      autoAdvance = false;
+      orbit = false;
+      activeIndex = (activeIndex - 1 + entities.length) % entities.length;
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+      e.preventDefault();
+      return;
+    }
 
-  if (k === "t") {
-    autoAdvance = !autoAdvance;
-    if (autoAdvance) runTour();
-    e.preventDefault();
-    return;
-  }
-});
-
-
+    if (k === "t") {
+      autoAdvance = !autoAdvance;
+      if (autoAdvance) runTour();
+      e.preventDefault();
+      return;
+    }
+  },
+  true // 👈 capture mode (critical)
+);
