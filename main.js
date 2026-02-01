@@ -671,23 +671,6 @@ async function runTourGuarded() {
   }
 }
 
-function restartAutoTour() {
-  // stop current run + cancel motion
-  autoAdvance = false;
-  orbit = false;
-  tourRunId++;
-
-  try { viewer.camera.cancelFlight(); } catch (_) {}
-  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-  // restart cleanly
-  setTimeout(() => {
-    if (entities.length === 0) return;
-    autoAdvance = true;
-    runTourGuarded();
-    updateTourButton();
-  }, 0);
-}
 
 function toggleAutoTour() {
   autoAdvance = !autoAdvance;
@@ -716,9 +699,8 @@ function updateTourButton() {
   const sidebar = document.getElementById("sidebar");
   const menuBtn = document.getElementById("fcMenuBtn");
   const tourBtn = document.getElementById("fcTourBtn");
-  const restartBtn = document.getElementById("fcRestartBtn");
 
-  if (!sidebar || !menuBtn || !tourBtn || !restartBtn) return;
+  if (!sidebar || !menuBtn || !tourBtn ) return;
 
   const mqMobile = window.matchMedia("(max-width: 768px)");
 
@@ -754,11 +736,6 @@ function updateTourButton() {
   tourBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleAutoTour();
-  });
-
-  restartBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    restartAutoTour();
   });
 
   // keep sidebar clicks from hitting the map
