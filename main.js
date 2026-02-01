@@ -387,16 +387,14 @@ async function buildEntitiesFromCSV() {
       disableDepthTestDistance: Number.POSITIVE_INFINITY, // draw on top of terrain
       distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7), // show far away
     },
-      
+      /*
     model: {
       uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
       scale: 1000.0,
-    
-      heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
-      height: 9999999999999999999999999, // meters above ground (try 3, 8, 15)
-    
+  
       shadows: Cesium.ShadowMode.DISABLED,
     },
+      */
     // (Optional) label that only appears when closer
     label: {
       text: item.name,
