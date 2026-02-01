@@ -474,7 +474,12 @@ function renderSiteList(filterText = "") {
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
     `;
-    row.addEventListener("click", () => flyToSite(s.entity));
+    
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      flyToSite(s.entity);
+    });
+
     listEl.appendChild(row);
   });
 }
@@ -627,6 +632,58 @@ window.addEventListener(
   },
   true
 );
+
+// ===== UI only: sidebar starts open on desktop, closed on mobile =====
+(function () {
+  const sidebar = document.getElementById("sidebar");
+  const toggle = document.getElementById("menuToggle");
+  const map = document.getElementById("cesiumContainer");
+
+  if (!sidebar || !toggle) return;
+
+  const mqMobile = window.matchMedia("(max-width: 768px)");
+
+  function setToggleIcon() {
+    const isClosed = sidebar.classList.contains("sidebarClosed");
+    toggle.textContent = isClosed ? "☰" : "✕";
+    toggle.setAttribute("aria-label", isClosed ? "Open locations menu" : "Close locations menu");
+  }
+
+  function setInitialState() {
+    // Desktop: open. Mobile: closed.
+    if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
+    else sidebar.classList.remove("sidebarClosed");
+    setToggleIcon();
+  }
+
+  // IMPORTANT: keep menu clickable (prevent events from reaching the map)
+  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
+  toggle.addEventListener("pointerdown", (e) => e.stopPropagation());
+  toggle.addEventListener("click", (e) => e.stopPropagation());
+
+  // Toggle open/close
+  toggle.addEventListener("click", () => {
+    sidebar.classList.toggle("sidebarClosed");
+    setToggleIcon();
+  });
+
+  // Optional UX: tapping the map closes the menu on mobile
+  if (map) {
+    map.addEventListener("pointerdown", () => {
+      if (mqMobile.matches) {
+        sidebar.classList.add("sidebarClosed");
+        setToggleIcon();
+      }
+    });
+  }
+
+  // Keep rule on resize/rotate
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", setInitialState);
+  else window.addEventListener("resize", setInitialState);
+
+  setInitialState();
+})();
 
 // =============================================================
 // START

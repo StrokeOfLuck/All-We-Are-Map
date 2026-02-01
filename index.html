@@ -14,14 +14,17 @@
       margin: 0;
       padding: 0;
       overflow: hidden;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     }
 
+    /* Force Cesium behind UI */
     #cesiumContainer {
       position: absolute;
       inset: 0;
+      z-index: 0;
     }
 
-    /* Sidebar list UI */
+    /* ================= Sidebar ================= */
     #sidebar {
       position: absolute;
       top: 12px;
@@ -32,11 +35,25 @@
       color: white;
       border-radius: 12px;
       overflow: hidden;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      z-index: 10;
+
+      /* CRITICAL: keep it above Cesium and clickable */
+      z-index: 1000;
+      pointer-events: auto;
+
       display: flex;
       flex-direction: column;
       backdrop-filter: blur(6px);
+      transition: transform 0.25s ease;
+    }
+
+    /* Make sure all sidebar children can receive clicks */
+    #sidebar * {
+      pointer-events: auto;
+    }
+
+    /* Closed state (used by your main.js toggle) */
+    #sidebar.sidebarClosed {
+      transform: translateX(-110%);
     }
 
     .sidebar-header {
@@ -44,9 +61,34 @@
       border-bottom: 1px solid rgba(255,255,255,0.12);
     }
 
+    .headerRow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
     .title {
       font-weight: 700;
-      margin-bottom: 8px;
+      margin: 0;
+    }
+
+    /* Menu toggle button lives in header now */
+    #menuToggle {
+      position: static;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(0,0,0,0.25);
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
     }
 
     #siteSearch {
@@ -63,8 +105,10 @@
     #siteList {
       overflow: auto;
       padding: 6px;
+      -webkit-overflow-scrolling: touch;
     }
 
+    /* Rows (so they feel clickable) */
     .siteRow {
       padding: 8px 10px;
       border-radius: 10px;
@@ -72,6 +116,7 @@
       margin: 4px 0;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(255,255,255,0.04);
+      touch-action: manipulation;
     }
 
     .siteRow:hover {
@@ -84,7 +129,7 @@
       margin-top: 2px;
     }
 
-    /* Controls / help overlay */
+    /* ================= Controls Help ================= */
     #controlsHelp {
       position: absolute;
       right: 12px;
@@ -96,7 +141,6 @@
       color: #fff;
       border-radius: 12px;
       padding: 12px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       font-size: 13px;
       line-height: 1.35;
       backdrop-filter: blur(6px);
@@ -115,12 +159,28 @@
       padding: 0;
     }
 
+    /* Keep shortcut letter + sentence on one line */
     #controlsHelp li {
       margin: 6px 0;
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    #controlsHelp li b {
+      display: inline;
+      min-width: 16px;
     }
 
     .controlsHelpHidden {
       display: none;
+    }
+
+    /* Hide help box on mobile/touch */
+    @media (max-width: 768px), (hover: none), (pointer: coarse) {
+      #controlsHelp {
+        display: none;
+      }
     }
   </style>
 </head>
@@ -130,13 +190,16 @@
 
   <div id="sidebar">
     <div class="sidebar-header">
-      <div class="title">Locations</div>
+      <div class="headerRow">
+        <div class="title">Locations</div>
+        <button id="menuToggle" type="button" aria-label="Toggle locations menu">✕</button>
+      </div>
       <input id="siteSearch" placeholder="Search…" />
     </div>
+
     <div id="siteList"></div>
   </div>
 
-  <!-- Visible instructions (toggle with H) -->
   <div id="controlsHelp">
     <div class="helpTitle">Controls</div>
     <div>Tip: double click a site marker to zoom</div>
