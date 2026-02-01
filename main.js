@@ -104,18 +104,12 @@ function hardUnlockCamera() {
   autoAdvance = false;
   orbit = false;
 
-  // invalidate any running tour loop
-  tourRunId++;
-
   try {
     viewer.camera.cancelFlight();
   } catch (_) {}
 
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
-
-  // ✅ keep UI in sync
-  updateTourButton();
 }
 
 // Wrap flyToBoundingSphere in a Promise
@@ -439,8 +433,6 @@ async function buildEntitiesFromCSV() {
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
-  tourRunId++;          // stop any running tour loop
-  updateTourButton();
 
   setActiveIndexFromEntity(entity);
 
