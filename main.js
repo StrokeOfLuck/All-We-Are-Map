@@ -633,86 +633,92 @@ window.addEventListener(
   true
 );
 
-// ===== UI only: sidebar starts open on desktop, closed on mobile =====
-(function () {
-  const sidebar = document.getElementById("sidebar");
-  const toggle = document.getElementById("menuToggle");
-  const map = document.getElementById("cesiumContainer");
-
-  if (!sidebar || !toggle) return;
-
-  const mqMobile = window.matchMedia("(max-width: 768px)");
-
-  function setToggleIcon() {
-    const isClosed = sidebar.classList.contains("sidebarClosed");
-    toggle.textContent = isClosed ? "☰" : "✕";
-    toggle.setAttribute("aria-label", isClosed ? "Open locations menu" : "Close locations menu");
-  }
-
-  function setInitialState() {
-    // Desktop: open. Mobile: closed.
-    if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
-    else sidebar.classList.remove("sidebarClosed");
-    setToggleIcon();
-  }
-
-  // IMPORTANT: keep menu clickable (prevent events from reaching the map)
-  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
-  sidebar.addEventListener("click", (e) => e.stopPropagation());
-  toggle.addEventListener("pointerdown", (e) => e.stopPropagation());
-  toggle.addEventListener("click", (e) => e.stopPropagation());
-
-  // Toggle open/close
-  toggle.addEventListener("click", () => {
-    sidebar.classList.toggle("sidebarClosed");
-    setToggleIcon();
-  });
-
-  // Optional UX: tapping the map closes the menu on mobile
-  if (map) {
-    map.addEventListener("pointerdown", () => {
-      if (mqMobile.matches) {
-        sidebar.classList.add("sidebarClosed");
-        setToggleIcon();
-      }
-    });
-  }
-
-  // Keep rule on resize/rotate
-  if (mqMobile.addEventListener) mqMobile.addEventListener("change", setInitialState);
-  else window.addEventListener("resize", setInitialState);
-
-  setInitialState();
-})();
 
 // =============================================================
-// UI: sidebar toggle + restart tour
+// Floating controls: menu + tour toggle + restart
 // =============================================================
+
+// Prevent multiple tour loops from stacking
+let tourRunId = 0;
+
+async function runTourGuarded() {
+  const myId = ++tourRunId;
+
+  // runTour() is your existing loop. We just guard against stale runs.
+  while (autoAdvance && myId === tourRunId) {
+    await goAboveSiteFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    await zoomDownFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    await tiltIntoOrbitPitch();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    headingDeg = 0;
+    orbit = true;
+    await sleep(holdSeconds * 1000);
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    orbit = false;
+    await tiltBackToFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    await goAboveSiteFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    activeIndex = (activeIndex + 1) % entities.length;
+  }
+}
 
 function restartAutoTour() {
+  // stop current run + cancel motion
   autoAdvance = false;
   orbit = false;
+  tourRunId++;
 
-  try {
-    viewer.camera.cancelFlight();
-  } catch (_) {}
-
+  try { viewer.camera.cancelFlight(); } catch (_) {}
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
+  // restart cleanly
   setTimeout(() => {
     if (entities.length === 0) return;
     autoAdvance = true;
-    runTour();
+    runTourGuarded();
+    updateTourButton();
   }, 0);
 }
 
-(function () {
-  const sidebar = document.getElementById("sidebar");
-  const closeBtn = document.getElementById("menuToggle");
-  const openBtn = document.getElementById("menuOpenBtn");
-  const restartBtn = document.getElementById("restartTourBtn");
+function toggleAutoTour() {
+  autoAdvance = !autoAdvance;
 
-  if (!sidebar || !closeBtn) return;
+  if (autoAdvance) {
+    // kick off tour if turning on
+    if (entities.length > 0) runTourGuarded();
+  } else {
+    orbit = false;
+    tourRunId++; // invalidate current run
+  }
+
+  updateTourButton();
+}
+
+function updateTourButton() {
+  const btn = document.getElementById("fcTourBtn");
+  if (!btn) return;
+
+  // ⏸ when running, ▶ when paused
+  btn.textContent = autoAdvance ? "⏸" : "▶";
+  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
+}
+
+(function wireFloatingControls() {
+  const sidebar = document.getElementById("sidebar");
+  const menuBtn = document.getElementById("fcMenuBtn");
+  const tourBtn = document.getElementById("fcTourBtn");
+  const restartBtn = document.getElementById("fcRestartBtn");
+
+  if (!sidebar || !menuBtn || !tourBtn || !restartBtn) return;
 
   const mqMobile = window.matchMedia("(max-width: 768px)");
 
@@ -720,54 +726,51 @@ function restartAutoTour() {
     return sidebar.classList.contains("sidebarClosed");
   }
 
-  function syncButtons() {
-    const closed = isClosed();
-    closeBtn.textContent = closed ? "☰" : "✕";
-    if (openBtn) openBtn.style.display = closed ? "inline-flex" : "none";
-  }
-
-  function setInitialState() {
+  function applyInitialSidebarState() {
+    // Desktop open, mobile closed
     if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
     else sidebar.classList.remove("sidebarClosed");
-    syncButtons();
+    updateMenuButton();
   }
 
-  function openMenu() {
-    sidebar.classList.remove("sidebarClosed");
-    syncButtons();
+  function updateMenuButton() {
+    // show ☰ when closed, ✕ when open
+    menuBtn.textContent = isClosed() ? "☰" : "✕";
+    menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
   }
 
-  function closeMenu() {
-    sidebar.classList.add("sidebarClosed");
-    syncButtons();
+  function toggleMenu() {
+    sidebar.classList.toggle("sidebarClosed");
+    updateMenuButton();
   }
 
-  closeBtn.addEventListener("click", (e) => {
+  // menu button always visible
+  menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    isClosed() ? openMenu() : closeMenu();
+    toggleMenu();
   });
 
-  if (openBtn) {
-    openBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openMenu();
-    });
-  }
+  // tour buttons always visible
+  tourBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleAutoTour();
+  });
 
-  if (restartBtn) {
-    restartBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      restartAutoTour();
-    });
-  }
+  restartBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    restartAutoTour();
+  });
 
-  sidebar.addEventListener("click", (e) => e.stopPropagation());
+  // keep sidebar clicks from hitting the map
   sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
 
-  if (mqMobile.addEventListener) mqMobile.addEventListener("change", setInitialState);
-  else window.addEventListener("resize", setInitialState);
+  // re-apply open/closed rule on rotate/resize
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
+  else window.addEventListener("resize", applyInitialSidebarState);
 
-  setInitialState();
+  applyInitialSidebarState();
+  updateTourButton();
 })();
 
 // =============================================================
@@ -784,5 +787,5 @@ function restartAutoTour() {
     return;
   }
 
-  runTour();
+  runTourGuarded();
 })();
