@@ -686,6 +686,91 @@ window.addEventListener(
 })();
 
 // =============================================================
+// UI: sidebar toggle + restart tour
+// =============================================================
+
+function restartAutoTour() {
+  autoAdvance = false;
+  orbit = false;
+
+  try {
+    viewer.camera.cancelFlight();
+  } catch (_) {}
+
+  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+  setTimeout(() => {
+    if (entities.length === 0) return;
+    autoAdvance = true;
+    runTour();
+  }, 0);
+}
+
+(function () {
+  const sidebar = document.getElementById("sidebar");
+  const closeBtn = document.getElementById("menuToggle");
+  const openBtn = document.getElementById("menuOpenBtn");
+  const restartBtn = document.getElementById("restartTourBtn");
+
+  if (!sidebar || !closeBtn) return;
+
+  const mqMobile = window.matchMedia("(max-width: 768px)");
+
+  function isClosed() {
+    return sidebar.classList.contains("sidebarClosed");
+  }
+
+  function syncButtons() {
+    const closed = isClosed();
+    closeBtn.textContent = closed ? "☰" : "✕";
+    if (openBtn) openBtn.style.display = closed ? "inline-flex" : "none";
+  }
+
+  function setInitialState() {
+    if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
+    else sidebar.classList.remove("sidebarClosed");
+    syncButtons();
+  }
+
+  function openMenu() {
+    sidebar.classList.remove("sidebarClosed");
+    syncButtons();
+  }
+
+  function closeMenu() {
+    sidebar.classList.add("sidebarClosed");
+    syncButtons();
+  }
+
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    isClosed() ? openMenu() : closeMenu();
+  });
+
+  if (openBtn) {
+    openBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMenu();
+    });
+  }
+
+  if (restartBtn) {
+    restartBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      restartAutoTour();
+    });
+  }
+
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
+  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", setInitialState);
+  else window.addEventListener("resize", setInitialState);
+
+  setInitialState();
+})();
+
+// =============================================================
 // START
 // =============================================================
 (async function init() {
