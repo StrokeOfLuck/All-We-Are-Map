@@ -633,56 +633,133 @@ window.addEventListener(
   true
 );
 
-// ===== UI only: sidebar starts open on desktop, closed on mobile =====
-(function () {
-  const sidebar = document.getElementById("sidebar");
-  const toggle = document.getElementById("menuToggle");
-  const map = document.getElementById("cesiumContainer");
 
-  if (!sidebar || !toggle) return;
+// =============================================================
+// Floating controls: menu + tour toggle + restart
+// =============================================================
+
+// Prevent multiple tour loops from stacking
+let tourRunId = 0;
+
+async function runTourGuarded() {
+  const myId = ++tourRunId;
+
+  // runTour() is your existing loop. We just guard against stale runs.
+  while (autoAdvance && myId === tourRunId) {
+    await goAboveSiteFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    await zoomDownFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    await tiltIntoOrbitPitch();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    headingDeg = 0;
+    orbit = true;
+    await sleep(holdSeconds * 1000);
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    orbit = false;
+    await tiltBackToFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    await goAboveSiteFlat();
+    if (!autoAdvance || myId !== tourRunId) break;
+
+    activeIndex = (activeIndex + 1) % entities.length;
+  }
+}
+
+
+function toggleAutoTour() {
+  autoAdvance = !autoAdvance;
+
+  if (autoAdvance) {
+    // kick off tour if turning on
+    if (entities.length > 0) runTourGuarded();
+  } else {
+    orbit = false;
+    tourRunId++; // invalidate current run
+  }
+
+  updateTourButton();
+}
+
+function updateTourButton() {
+  const btn = document.getElementById("fcTourBtn");
+  if (!btn) return;
+
+  // ⏸ when running, ▶ when paused
+  btn.textContent = autoAdvance ? "❚❚" : "▶";
+  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
+}
+
+(function wireFloatingControls() {
+  const sidebar = document.getElementById("sidebar");
+  const menuBtn = document.getElementById("fcMenuBtn");
+  const tourBtn = document.getElementById("fcTourBtn");
+
+  if (!sidebar || !menuBtn || !tourBtn ) return;
 
   const mqMobile = window.matchMedia("(max-width: 768px)");
 
-  function setToggleIcon() {
-    const isClosed = sidebar.classList.contains("sidebarClosed");
-    toggle.textContent = isClosed ? "☰" : "✕";
-    toggle.setAttribute("aria-label", isClosed ? "Open locations menu" : "Close locations menu");
+  function isClosed() {
+    return sidebar.classList.contains("sidebarClosed");
   }
 
-  function setInitialState() {
-    // Desktop: open. Mobile: closed.
-    if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
-    else sidebar.classList.remove("sidebarClosed");
-    setToggleIcon();
+  function applyInitialSidebarState() {
+    // Start CLOSED on all devices
+    sidebar.classList.add("sidebarClosed");
+    updateMenuButton();
+  }
+  function updateMenuButton() {
+    // show ☰ when closed, ✕ when open
+    menuBtn.textContent = isClosed() ? "☰" : "✕";
+    menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
   }
 
-  // IMPORTANT: keep menu clickable (prevent events from reaching the map)
-  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
-  sidebar.addEventListener("click", (e) => e.stopPropagation());
-  toggle.addEventListener("pointerdown", (e) => e.stopPropagation());
-  toggle.addEventListener("click", (e) => e.stopPropagation());
-
-  // Toggle open/close
-  toggle.addEventListener("click", () => {
+  function toggleMenu() {
     sidebar.classList.toggle("sidebarClosed");
-    setToggleIcon();
+    updateMenuButton();
+  }
+
+  // menu button always visible
+  menuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleMenu();
   });
 
-  // Optional UX: tapping the map closes the menu on mobile
-  if (map) {
-    map.addEventListener("pointerdown", () => {
-      if (mqMobile.matches) {
-        sidebar.classList.add("sidebarClosed");
-        setToggleIcon();
-      }
-    });
-  }
+  // tour buttons always visible
+  tourBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleAutoTour();
+  });
 
-  // Keep rule on resize/rotate
-  if (mqMobile.addEventListener) mqMobile.addEventListener("change", setInitialState);
-  else window.addEventListener("resize", setInitialState);
+  // keep sidebar clicks from hitting the map
+  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
 
-  setInitialState();
+  // re-apply open/closed rule on rotate/resize
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
+  else window.addEventListener("resize", applyInitialSidebarState);
+
+  applyInitialSidebarState();
+  updateTourButton();
+})();
+
+// =============================================================
+// Help box close button (X) - runs once
+// =============================================================
+(function wireHelpCloseButton() {
+  const help = document.getElementById("controlsHelp");
+  const closeBtn = document.getElementById("helpCloseBtn");
+  if (!help || !closeBtn) return;
+
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    help.classList.add("controlsHelpHidden");
+  });
 })();
 
 // =============================================================
@@ -699,5 +776,5 @@ window.addEventListener(
     return;
   }
 
-  runTour();
+  runTourGuarded();
 })();

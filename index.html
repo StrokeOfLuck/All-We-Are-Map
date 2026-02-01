@@ -17,7 +17,7 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     }
 
-    /* Force Cesium behind UI */
+    /* Cesium always behind UI */
     #cesiumContainer {
       position: absolute;
       inset: 0;
@@ -27,7 +27,7 @@
     /* ================= Sidebar ================= */
     #sidebar {
       position: absolute;
-      top: 12px;
+      top: 76px;
       left: 12px;
       width: 300px;
       max-height: calc(100% - 24px);
@@ -36,7 +36,6 @@
       border-radius: 12px;
       overflow: hidden;
 
-      /* CRITICAL: keep it above Cesium and clickable */
       z-index: 1000;
       pointer-events: auto;
 
@@ -46,12 +45,9 @@
       transition: transform 0.25s ease;
     }
 
-    /* Make sure all sidebar children can receive clicks */
-    #sidebar * {
-      pointer-events: auto;
-    }
+    #sidebar * { pointer-events: auto; }
 
-    /* Closed state (used by your main.js toggle) */
+    /* Closed state controlled by JS */
     #sidebar.sidebarClosed {
       transform: translateX(-110%);
     }
@@ -61,34 +57,9 @@
       border-bottom: 1px solid rgba(255,255,255,0.12);
     }
 
-    .headerRow {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-
     .title {
       font-weight: 700;
-      margin: 0;
-    }
-
-    /* Menu toggle button lives in header now */
-    #menuToggle {
-      position: static;
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(0,0,0,0.25);
-      color: #fff;
-      font-size: 20px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      user-select: none;
+      margin: 0 0 8px 0;
     }
 
     #siteSearch {
@@ -108,7 +79,6 @@
       -webkit-overflow-scrolling: touch;
     }
 
-    /* Rows (so they feel clickable) */
     .siteRow {
       padding: 8px 10px;
       border-radius: 10px;
@@ -129,25 +99,91 @@
       margin-top: 2px;
     }
 
+    /* ================= Floating controls (always visible) ================= */
+     #floatingControls {
+      position: absolute;
+      top: 12px;
+      left: 12px;          /* ✅ move to left */
+      right: auto;         /* ✅ remove right anchoring */
+      z-index: 1200;
+    
+      display: inline-flex;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 12px;
+    
+      background: rgba(20, 20, 20, 0.86);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(6px);
+      pointer-events: auto;
+    }
+    .fcBtn {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(0,0,0,0.25);
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      pointer-events: auto;
+    }
+
+    .fcBtn:active { transform: scale(0.98); }
+
     /* ================= Controls Help ================= */
     #controlsHelp {
       position: absolute;
       right: 12px;
       bottom: 12px;
       z-index: 20;
-      width: 320px;
-      max-width: calc(100% - 24px);
+    
+      width: fit-content;              /* ✅ shrink to content */
+      max-width: min(90vw, 360px);     /* ✅ prevent overflow */
+    
       background: rgba(0,0,0,0.70);
       color: #fff;
       border-radius: 12px;
-      padding: 12px;
+      padding: 14px 16px;
       font-size: 13px;
-      line-height: 1.35;
+      line-height: 1.4;
+    
       backdrop-filter: blur(6px);
       border: 1px solid rgba(255,255,255,0.12);
       user-select: none;
-      pointer-events: none; /* doesn't block the map */
+      pointer-events: none;
     }
+
+    #helpCloseBtn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+
+  border: none;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  pointer-events: auto; /* allow clicking */
+}
+
+#helpCloseBtn:hover {
+  background: rgba(255,255,255,0.22);
+}
 
     #controlsHelp .helpTitle {
       font-weight: 700;
@@ -155,32 +191,30 @@
     }
 
     #controlsHelp ul {
-      margin: 8px 0 0 18px;
+      margin: 8px 0 0 0;
       padding: 0;
+      list-style: none;
     }
-
-    /* Keep shortcut letter + sentence on one line */
+    
     #controlsHelp li {
-      margin: 6px 0;
-      display: flex;
+      display: grid;
+      grid-template-columns: auto 1fr;
       gap: 10px;
-      align-items: baseline;
+      margin: 6px 0;
+      white-space: nowrap;
     }
-
+    
     #controlsHelp li b {
-      display: inline;
-      min-width: 16px;
+      min-width: 18px;
+      text-align: right;
+      font-weight: 700;
     }
 
-    .controlsHelpHidden {
-      display: none;
-    }
+    .controlsHelpHidden { display: none; }
 
-    /* Hide help box on mobile/touch */
+    /* Hide help on mobile */
     @media (max-width: 768px), (hover: none), (pointer: coarse) {
-      #controlsHelp {
-        display: none;
-      }
+      #controlsHelp { display: none; }
     }
   </style>
 </head>
@@ -188,31 +222,43 @@
 <body>
   <div id="cesiumContainer"></div>
 
+  <!-- Floating controls (always visible) -->
+  <div id="floatingControls" aria-label="Map controls">
+    <button id="fcMenuBtn" class="fcBtn" type="button" aria-label="Toggle locations menu">☰</button>
+    <button id="fcTourBtn" class="fcBtn" type="button" aria-label="Toggle auto tour">⏸</button>
+  </div>
+
+  <!-- Sidebar -->
   <div id="sidebar">
     <div class="sidebar-header">
-      <div class="headerRow">
-        <div class="title">Locations</div>
-        <button id="menuToggle" type="button" aria-label="Toggle locations menu">✕</button>
-      </div>
+      <div class="title">Locations</div>
       <input id="siteSearch" placeholder="Search…" />
     </div>
-
     <div id="siteList"></div>
   </div>
 
-  <div id="controlsHelp">
-    <div class="helpTitle">Controls</div>
-    <div>Tip: double click a site marker to zoom</div>
-    <ul>
-      <li><b>T</b> toggle auto tour</li>
-      <li><b>R</b> rotate at current site</li>
-      <li><b>N</b> next site</li>
-      <li><b>P</b> previous site</li>
-      <li><b>H</b> hide/show this help</li>
-      <li>Click and drag the map to take control (stops tour/rotation)</li>
-      <li>Mouse wheel / trackpad scroll also stops tour/rotation</li>
-    </ul>
+  <!-- Help box -->
+<div id="controlsHelp">
+  <button id="helpCloseBtn" aria-label="Close help">✕</button>
+
+  <div class="helpTitle">Controls</div>
+  <div style="opacity:0.9; margin-bottom:6px;">
+    Tip: double-click a site marker to zoom
   </div>
+  <ul>
+
+  <ul>
+    <li><b>🖱</b> Left click + drag → pan</li>
+    <li><b>🖱</b> Scroll / right click + drag → zoom</li>
+    <li><b>🖱</b> Middle mouse button + drag → rotate</li>
+
+    <li><b>T</b> toggle auto tour</li>
+    <li><b>R</b> rotate at current site</li>
+    <li><b>N</b> next site</li>
+    <li><b>P</b> previous site</li>
+    <li><b>H</b> hide/show this help</li>
+  </ul>
+</div>
 
   <script>
     window.CESIUM_BASE_URL = "./Build/Cesium/";
