@@ -495,15 +495,21 @@ canvas.addEventListener("mousedown", () => {
   autoAdvance = false;
   orbit = false;
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+  // optional: put focus back on the canvas so scrolling/keys feel consistent
+  canvas.focus();
 });
 
+// Keyboard shortcuts should work even after clicking the sidebar.
+// But do NOT hijack keys while typing in the search input.
 window.addEventListener("keydown", async (e) => {
-  // If you’re typing in the search box, don’t hijack keys
-  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  const active = document.activeElement;
+  const tag = active ? active.tagName : "";
   if (tag === "INPUT" || tag === "TEXTAREA") return;
 
   const k = e.key.toLowerCase();
 
+  // R = tilt + start orbit at current active site
   if (k === "r") {
     autoAdvance = false;
     orbit = false;
@@ -512,8 +518,10 @@ window.addEventListener("keydown", async (e) => {
     headingDeg = 0;
     orbit = true;
     e.preventDefault();
+    return;
   }
 
+  // N = next site
   if (k === "n") {
     autoAdvance = false;
     orbit = false;
@@ -521,44 +529,7 @@ window.addEventListener("keydown", async (e) => {
     await goAboveSiteFlat();
     await zoomDownFlat();
     e.preventDefault();
-  }
-
-  if (k === "p") {
-    autoAdvance = false;
-    orbit = false;
-    activeIndex = (activeIndex - 1 + entities.length) % entities.length;
-    await goAboveSiteFlat();
-    await zoomDownFlat();
-    e.preventDefault();
-  }
-
-  if (k === "t") {
-    autoAdvance = !autoAdvance;
-    orbit = false;
-    if (autoAdvance) runTour();
-    e.preventDefault();
-  }
-});
-
-  // R = resume orbit at current site (tilt first, then orbit)
-  if (k === "r") {
-    autoAdvance = false; // manual mode
-    orbit = false;
-    await zoomDownFlat();
-    await tiltIntoOrbitPitch();
-    headingDeg = 0;
-    orbit = true;
-    e.preventDefault();
-  }
-
-  // N = next site (flat travel sequence, no orbit until you press R or restart tour)
-  if (k === "n") {
-    autoAdvance = false;
-    orbit = false;
-    activeIndex = (activeIndex + 1) % entities.length;
-    await goAboveSiteFlat();
-    await zoomDownFlat();
-    e.preventDefault();
+    return;
   }
 
   // P = previous site
@@ -569,12 +540,16 @@ window.addEventListener("keydown", async (e) => {
     await goAboveSiteFlat();
     await zoomDownFlat();
     e.preventDefault();
+    return;
   }
 
   // T = toggle auto tour
   if (k === "t") {
     autoAdvance = !autoAdvance;
+    orbit = false;
     if (autoAdvance) runTour();
     e.preventDefault();
+    return;
   }
 });
+
