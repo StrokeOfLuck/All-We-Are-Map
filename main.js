@@ -356,7 +356,7 @@ async function buildEntitiesFromCSV() {
 
     const name =
       idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
-        ? String(r[idxCustomerName]).trim()
+        ? String(r[idxCustomerName]).trim() 
         : `Site ${customerId}`;
 
     const prev = bestByCustomer.get(customerId);
@@ -373,17 +373,15 @@ async function buildEntitiesFromCSV() {
 
   for (const [customerId, item] of bestByCustomer.entries()) {
     const { lat, lon } = item.coord;
-
+    
     const entity = viewer.entities.add({
       name: item.name,
-      // IMPORTANT SWAP: CSV gives LAT,LON; Cesium needs LON,LAT
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
-      point: {
-        pixelSize: 10,
-        color: Cesium.Color.YELLOW,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 1,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      model: {
+        uri: "./models/cc0_light_bulb.glb",
+        minimumPixelSize: 40,
+        maximumScale: 2000,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
       },
     });
 
