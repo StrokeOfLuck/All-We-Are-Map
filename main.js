@@ -1,3 +1,5 @@
+viewer.resolutionScale = window.devicePixelRatio;
+
 // -------------------------------
 // Cesium: no ion tokens needed
 // -------------------------------
