@@ -1,20 +1,11 @@
-// main.js (ES module)
+/ -------------------------------
+// Cesium: no ion tokens needed
+// -------------------------------
+Cesium.Ion.defaultAccessToken = "";
 
-// If you are using Cesium as a global (from Build/Cesium/Cesium.js),
-// it is available as window.Cesium.
-const Cesium = window.Cesium;
-
-// ------------------------------------------------------------
-// ✅ RECOMMENDED: Cesium ion Bing Aerial (licensed, public-safe)
-// ------------------------------------------------------------
-// 1) Create a free Cesium ion account
-// 2) Make a token
-// 3) Paste it here
-Cesium.Ion.defaultAccessToken = "PASTE_YOUR_CESIUM_ION_TOKEN_HERE";
-
-// ------------------------------------------------------------
+// -------------------------------
 // Viewer (NO default imagery)
-// ------------------------------------------------------------
+// -------------------------------
 const viewer = new Cesium.Viewer("cesiumContainer", {
   animation: false,
   timeline: false,
@@ -25,93 +16,36 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   terrainProvider: new Cesium.EllipsoidTerrainProvider(),
 });
 
-viewer.scene.globe.enableLighting = true;
-
-// ------------------------------------------------------------
-// Add Bing Aerial imagery from Cesium ion
-// assetId 2 is the standard Bing Aerial base layer in ion
-// ------------------------------------------------------------
+// -------------------------------
+// Basemap (pick ONE)
+// -------------------------------
 viewer.imageryLayers.addImageryProvider(
-  new Cesium.IonImageryProvider({
-    assetId: 2,
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    credit: "Esri World Imagery",
   })
 );
 
-// =============================================================
-// LOAD SITES FROM EXCEL (sites.xlsx)
-// - Sheet: "Population" (falls back to first sheet)
-// - Column "Coordinates" is "lat, lon" in your file
-// - Dedupe using "Customer ID" when possible
-// =============================================================
-async function loadSitesFromExcel() {
-  const url = "sites.xlsx"; // put this in repo root next to index.html
+// -------------------------------
+// Sites as [lon, lat]
+// -------------------------------
+const sites = [
+  [31.428655467144992, 0.9614846273101064],
+  [34.01854528405185, 0.7197713258559371],
+  [30.610227104827818, 0.6947441058489014],
+  [32.91984166612055, 0.686121295563971],
+  [33.326719075381885, 0.6598445605145666],
+];
 
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-
-  const buf = await res.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array" });
-
-  const sheet =
-    wb.Sheets["Population"] || wb.Sheets[wb.SheetNames[0]];
-
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-
-  const byKey = new Map();
-
-  for (const r of rows) {
-    const coordStr = String(r["Coordinates"] ?? "").trim();
-    if (!coordStr) continue;
-
-    // Coordinates in your sheet look like: "0.360129..., 32.581690..."
-    // That is LAT, LON. Cesium wants LON, LAT.
-    const parts = coordStr.split(",").map((s) => s.trim());
-    if (parts.length < 2) continue;
-
-    const lat = Number(parts[0]);
-    const lon = Number(parts[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-
-    const customerId = String(r["Customer ID"] ?? "").trim();
-    const name =
-      String(r["Customer Name"] ?? "").trim() ||
-      String(r["Customer"] ?? "").trim() ||
-      `Site`;
-
-    // Dedupe key: prefer Customer ID, else fallback to coordinate string
-    const key = customerId || coordStr;
-
-    if (!byKey.has(key)) {
-      byKey.set(key, {
-        id: customerId,
-        name,
-        lon,
-        lat,
-      });
-    }
-  }
-
-  const sites = [...byKey.values()];
-
-  if (sites.length === 0) {
-    throw new Error(
-      "No sites loaded. Check Excel sheet name and 'Coordinates' column."
-    );
-  }
-
-  return sites;
-}
-
-// =============================================================
-// CREATE DOTS
-// =============================================================
-function addSitesToMap(siteObjs) {
-  const entities = [];
-
-  siteObjs.forEach((s, i) => {
-    const e = viewer.entities.add({
-      name: s.name ? `${s.name}` : `Site ${i + 1}`,
-      position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat),
+// -------------------------------
+// Dots
+// -------------------------------
+const entities = [];
+sites.forEach((p, i) => {
+  entities.push(
+    viewer.entities.add({
+      name: `Site ${i + 1}`,
+      position: Cesium.Cartesian3.fromDegrees(p[0], p[1]),
       point: {
         pixelSize: 10,
         color: Cesium.Color.YELLOW,
@@ -119,54 +53,31 @@ function addSitesToMap(siteObjs) {
         outlineWidth: 1,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
-      description: `
-        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;">
-          <div style="font-weight:600; margin-bottom:6px;">${escapeHtml(
-            s.name || `Site ${i + 1}`
-          )}</div>
-          <div><b>Lat:</b> ${s.lat}</div>
-          <div><b>Lon:</b> ${s.lon}</div>
-          ${s.id ? `<div><b>ID:</b> ${escapeHtml(s.id)}</div>` : ""}
-        </div>
-      `,
-    });
-
-    entities.push(e);
-  });
-
-  return entities;
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+    })
+  );
+});
 
 // =============================================================
 // KNOBS YOU CARE ABOUT
 // =============================================================
 
 // Camera distances
-const overviewRangeMeters = 13500000; // far OUT between sites
-const siteRangeMeters = 1200;         // close IN at the site
+const overviewRangeMeters = 450000; // how far OUT between sites (Uganda view)
+const siteRangeMeters = 1200;       // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 2.5;            // move above site + zoom out duration
-const zoomInSeconds = 2.5;            // zoom down duration
-const tiltSeconds = 1.6;              // tilt duration
+const travelSeconds = 4.5;          // "move above next site" + "zoom out"
+const zoomInSeconds = 4.0;          // zooming down flat
+const tiltSeconds = 1.6;            // how fast it tilts into orbit pitch
 
 // Orbit behavior (ONLY while holding at the site)
-const orbitPitchDeg = -45;
-const orbitSpeedDegPerSec = 8;
-const holdSeconds = 3;
+const orbitPitchDeg = -45;          // the tilt angle once at the site
+const orbitSpeedDegPerSec = 8;      // rotation speed at the site
+const holdSeconds = 6;              // how long to rotate at each site
 
 // Flat travel orientation (north-up, no rotation)
-const flatHeadingDeg = 0;
-const flatPitchDeg = -90;
+const flatHeadingDeg = 0;           // north-up
+const flatPitchDeg = -90;           // straight down
 
 // Auto tour
 let autoAdvance = true;
@@ -174,9 +85,8 @@ let autoAdvance = true;
 // =============================================================
 // INTERNAL STATE
 // =============================================================
-let entities = [];
 let activeIndex = 0;
-let orbit = false; // orbit starts OFF (travel flat)
+let orbit = false;                 // IMPORTANT: orbit starts OFF (travel flat)
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
@@ -192,6 +102,7 @@ function getActiveSitePosition() {
   return entities[activeIndex].position.getValue(Cesium.JulianDate.now());
 }
 
+// Wrap flyToBoundingSphere in a Promise (Cesium uses callbacks)
 function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   const target = getActiveSitePosition();
   const offset = new Cesium.HeadingPitchRange(
@@ -220,8 +131,9 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   });
 }
 
+// “Travel flat above site” (north-up, straight down, far out)
 async function goAboveSiteFlat() {
-  orbit = false;
+  orbit = false; // ensure NO rotation during travel
   headingDeg = 0;
   await flyToRange({
     rangeMeters: overviewRangeMeters,
@@ -231,8 +143,9 @@ async function goAboveSiteFlat() {
   });
 }
 
+// “Zoom down flat” (still north-up, straight down, close range)
 async function zoomDownFlat() {
-  orbit = false;
+  orbit = false; // still NO rotation
   headingDeg = 0;
   await flyToRange({
     rangeMeters: siteRangeMeters,
@@ -242,17 +155,19 @@ async function zoomDownFlat() {
   });
 }
 
+// “Tilt into orbit pitch” (no rotate yet, just slant)
 async function tiltIntoOrbitPitch() {
-  orbit = false;
+  orbit = false; // still not rotating during tilt
   headingDeg = 0;
   await flyToRange({
     rangeMeters: siteRangeMeters,
     pitchDeg: orbitPitchDeg,
-    headingDegValue: 0,
+    headingDegValue: 0, // start orbit facing north
     durationSec: tiltSeconds,
   });
 }
 
+// “Tilt back flat” before leaving (no rotate)
 async function tiltBackToFlat() {
   orbit = false;
   headingDeg = 0;
@@ -277,6 +192,7 @@ viewer.clock.onTick.addEventListener(() => {
 
   headingDeg += orbitSpeedDegPerSec * dt;
 
+  // While orbiting, keep same range + pitch, only change heading
   viewer.camera.lookAt(
     getActiveSitePosition(),
     new Cesium.HeadingPitchRange(
@@ -288,33 +204,45 @@ viewer.clock.onTick.addEventListener(() => {
 });
 
 // =============================================================
-// TOUR
+// TOUR: flat travel -> flat zoom -> tilt -> rotate -> reverse -> next
 // =============================================================
 async function runTour() {
   while (autoAdvance) {
+    // 1) Move above current site flat (this also helps “re-acquire” if user moved)
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
+    // 2) Zoom down flat
     await zoomDownFlat();
     if (!autoAdvance) break;
 
+    // 3) Tilt into orbit pitch (still no rotation)
     await tiltIntoOrbitPitch();
     if (!autoAdvance) break;
 
+    // 4) Start rotating at site
     headingDeg = 0;
     orbit = true;
     await sleep(holdSeconds * 1000);
 
+    // 5) Stop rotating, tilt back flat
     orbit = false;
     await tiltBackToFlat();
     if (!autoAdvance) break;
 
+    // 6) Zoom out flat (Uganda view)
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
+    // 7) Next site
     activeIndex = (activeIndex + 1) % entities.length;
   }
 }
+
+// =============================================================
+// START
+// =============================================================
+runTour();
 
 // =============================================================
 // CONTROLS
@@ -323,6 +251,7 @@ const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
 canvas.focus();
 
+// Click stops the tour and orbit, gives user control
 canvas.addEventListener("mousedown", () => {
   autoAdvance = false;
   orbit = false;
@@ -332,8 +261,9 @@ canvas.addEventListener("mousedown", () => {
 canvas.addEventListener("keydown", async (e) => {
   const k = e.key.toLowerCase();
 
+  // R = resume orbit at current site (tilt first, then orbit)
   if (k === "r") {
-    autoAdvance = false;
+    autoAdvance = false; // manual mode
     orbit = false;
     await zoomDownFlat();
     await tiltIntoOrbitPitch();
@@ -342,6 +272,7 @@ canvas.addEventListener("keydown", async (e) => {
     e.preventDefault();
   }
 
+  // N = next site (flat travel sequence, no orbit until you press R or restart tour)
   if (k === "n") {
     autoAdvance = false;
     orbit = false;
@@ -351,6 +282,7 @@ canvas.addEventListener("keydown", async (e) => {
     e.preventDefault();
   }
 
+  // P = previous site
   if (k === "p") {
     autoAdvance = false;
     orbit = false;
@@ -360,27 +292,10 @@ canvas.addEventListener("keydown", async (e) => {
     e.preventDefault();
   }
 
+  // T = toggle auto tour
   if (k === "t") {
     autoAdvance = !autoAdvance;
     if (autoAdvance) runTour();
     e.preventDefault();
   }
-});
-
-// =============================================================
-// STARTUP
-// =============================================================
-async function main() {
-  const siteObjs = await loadSitesFromExcel();
-  entities = addSitesToMap(siteObjs);
-
-  // If you want, you can zoom to all points once:
-  await viewer.zoomTo(viewer.entities);
-
-  runTour();
-}
-
-main().catch((err) => {
-  console.error(err);
-  alert(err.message || String(err));
 });
