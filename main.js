@@ -218,7 +218,7 @@ async function buildEntitiesFromCSV() {
 // =============================================================
 
 // Camera distances
-const overviewRangeMeters = 5550000; // how far OUT between sites (Uganda view)
+const overviewRangeMeters = 2550000; // how far OUT between sites (Uganda view)
 const siteRangeMeters = 1200; // how close IN at the site
 
 // Travel behavior
