@@ -41,6 +41,37 @@ viewer.imageryLayers.addImageryProvider(
   })
 );
 
+
+//Disable the default zoom because it goes into much for the images Im loading
+viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
+  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+);
+//Should let me double click to a set zoom distance
+const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+handler.setInputAction((movement) => {
+  const picked = viewer.scene.pick(movement.position);
+  if (!picked || !picked.id) return;
+
+  autoAdvance = false;
+  orbit = false;
+
+  viewer.camera.flyToBoundingSphere(
+    new Cesium.BoundingSphere(
+      picked.id.position.getValue(Cesium.JulianDate.now()),
+      1.0
+    ),
+    {
+      duration: 1.8,
+      offset: new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(0),           // north-up
+        Cesium.Math.toRadians(flatPitchDeg),// straight down
+        siteRangeMeters                     // 👈 YOUR distance
+      ),
+    }
+  );
+}, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+
 // =============================================================
 // LOAD SITES FROM CSV (NO DEPENDENCIES)
 // CSV format (yours):
