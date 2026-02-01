@@ -378,10 +378,19 @@ async function buildEntitiesFromCSV() {
       name: item.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
       model: {
-        uri: "./models/cc0_light_bulb.glb",
-        minimumPixelSize: 100,
-        maximumScale: 200,
+        uri: "./models/cartoon_low_poly_solar_panel.glb",
+      
+        // REMOVE minimumPixelSize (this is the usual culprit for “giant stuff”)
+        // minimumPixelSize: 100,
+      
+        // Use a sane real-world-ish scale instead
+        scale: 1.0,          // try 0.2, 0.5, 1, 2
+        maximumScale: 10,    // keep this small (or remove it)
+      
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+      
+        // Optional: if the model is casting weird shadow artifacts
+        shadows: Cesium.ShadowMode.DISABLED,
         /*
         color: Cesium.Color.YELLOW.withAlpha(0.85),
         colorBlendMode: Cesium.ColorBlendMode.MIX,
