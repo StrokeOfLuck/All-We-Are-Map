@@ -628,6 +628,50 @@ window.addEventListener(
   true
 );
 
+// ===== UI only: sidebar starts open on desktop, closed on mobile =====
+(function () {
+  const sidebar = document.getElementById("sidebar");
+  const toggle = document.getElementById("menuToggle");
+  const map = document.getElementById("cesiumContainer");
+
+  if (!sidebar || !toggle) return;
+
+  const mqMobile = window.matchMedia("(max-width: 768px)");
+
+  function setToggleIcon() {
+    const isClosed = sidebar.classList.contains("sidebarClosed");
+    toggle.textContent = isClosed ? "☰" : "✕";
+  }
+
+  function setInitialState() {
+    // Desktop: open. Mobile: closed.
+    if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
+    else sidebar.classList.remove("sidebarClosed");
+    setToggleIcon();
+  }
+
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    sidebar.classList.toggle("sidebarClosed");
+    setToggleIcon();
+  });
+
+  // Optional nice UX: tapping the map closes the menu on mobile
+  if (map) {
+    map.addEventListener("pointerdown", () => {
+      if (mqMobile.matches) {
+        sidebar.classList.add("sidebarClosed");
+        setToggleIcon();
+      }
+    });
+  }
+
+  // If you resize/rotate, keep the rule: desktop open, mobile closed
+  mqMobile.addEventListener("change", setInitialState);
+
+  setInitialState();
+})();
+
 // =============================================================
 // START
 // =============================================================
