@@ -497,8 +497,48 @@ canvas.addEventListener("mousedown", () => {
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 });
 
-canvas.addEventListener("keydown", async (e) => {
+window.addEventListener("keydown", async (e) => {
+  // If you’re typing in the search box, don’t hijack keys
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+
   const k = e.key.toLowerCase();
+
+  if (k === "r") {
+    autoAdvance = false;
+    orbit = false;
+    await zoomDownFlat();
+    await tiltIntoOrbitPitch();
+    headingDeg = 0;
+    orbit = true;
+    e.preventDefault();
+  }
+
+  if (k === "n") {
+    autoAdvance = false;
+    orbit = false;
+    activeIndex = (activeIndex + 1) % entities.length;
+    await goAboveSiteFlat();
+    await zoomDownFlat();
+    e.preventDefault();
+  }
+
+  if (k === "p") {
+    autoAdvance = false;
+    orbit = false;
+    activeIndex = (activeIndex - 1 + entities.length) % entities.length;
+    await goAboveSiteFlat();
+    await zoomDownFlat();
+    e.preventDefault();
+  }
+
+  if (k === "t") {
+    autoAdvance = !autoAdvance;
+    orbit = false;
+    if (autoAdvance) runTour();
+    e.preventDefault();
+  }
+});
 
   // R = resume orbit at current site (tilt first, then orbit)
   if (k === "r") {
