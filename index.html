@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>All We Are Solar Map</title>
+
+  <link rel="stylesheet" href="./Build/Cesium/Widgets/widgets.css" />
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // REQUIRED so Cesium can find Workers and Assets
+    window.CESIUM_BASE_URL = "./Build/Cesium/";
+  </script>
+
+  <script src="./Build/Cesium/Cesium.js"></script>
+  <script src="./main.js"></script>
+</body>
+</html>
