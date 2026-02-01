@@ -379,10 +379,10 @@ async function buildEntitiesFromCSV() {
     position: Cesium.Cartesian3.fromDegrees(lon, lat),
     model: {
       uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
-      scale: 100.0,
+      scale: 1000.0,
     
       heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
-      height: 8, // meters above ground (try 3, 8, 15)
+      height: 100, // meters above ground (try 3, 8, 15)
     
       shadows: Cesium.ShadowMode.DISABLED,
     },
