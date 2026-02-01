@@ -86,7 +86,7 @@ const tiltSeconds = 0.03;            // how fast it tilts into orbit pitch
 // Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;          // the tilt angle once at the site
 const orbitSpeedDegPerSec = 8;      // rotation speed at the site
-const holdSeconds = 6;              // how long to rotate at each site
+const holdSeconds = 3;              // how long to rotate at each site
 
 // Flat travel orientation (north-up, no rotation)
 const flatHeadingDeg = 0;           // north-up
