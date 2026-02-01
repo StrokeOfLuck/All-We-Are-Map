@@ -79,7 +79,7 @@ const overviewRangeMeters = 13500000; // how far OUT between sites (Uganda view)
 const siteRangeMeters = 1200;       // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 1.5;          // "move above next site" + "zoom out"
+const travelSeconds = 0.5;          // "move above next site" + "zoom out"
 const zoomInSeconds = 1.5;          // zooming down flat
 const tiltSeconds = 0.3;            // how fast it tilts into orbit pitch
 
