@@ -392,26 +392,18 @@ async function runTour() {
 // =============================================================
 // SIDEBAR UI (list + search + click-to-fly)
 // =============================================================
-
-function setActiveIndexFromEntity(entity) {
-  const idx = entities.indexOf(entity);
-  if (idx !== -1) activeIndex = idx;
-}
-
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
-
-  setActiveIndexFromEntity(entity);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
 
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.8,
     offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),
-      Cesium.Math.toRadians(flatPitchDeg),
-      siteRangeMeters
+      Cesium.Math.toRadians(0),           // north-up
+      Cesium.Math.toRadians(flatPitchDeg),// straight down
+      siteRangeMeters                     // your distance
     ),
   });
 }
@@ -503,33 +495,23 @@ canvas.addEventListener("mousedown", () => {
   autoAdvance = false;
   orbit = false;
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-  // optional: put focus back on the canvas so scrolling/keys feel consistent
-  canvas.focus();
 });
 
-// Keyboard shortcuts should work even after clicking the sidebar.
-// But do NOT hijack keys while typing in the search input.
-window.addEventListener("keydown", async (e) => {
-  const active = document.activeElement;
-  const tag = active ? active.tagName : "";
-  if (tag === "INPUT" || tag === "TEXTAREA") return;
-
+canvas.addEventListener("keydown", async (e) => {
   const k = e.key.toLowerCase();
 
-  // R = tilt + start orbit at current active site
+  // R = resume orbit at current site (tilt first, then orbit)
   if (k === "r") {
-    autoAdvance = false;
+    autoAdvance = false; // manual mode
     orbit = false;
     await zoomDownFlat();
     await tiltIntoOrbitPitch();
     headingDeg = 0;
     orbit = true;
     e.preventDefault();
-    return;
   }
 
-  // N = next site
+  // N = next site (flat travel sequence, no orbit until you press R or restart tour)
   if (k === "n") {
     autoAdvance = false;
     orbit = false;
@@ -537,7 +519,6 @@ window.addEventListener("keydown", async (e) => {
     await goAboveSiteFlat();
     await zoomDownFlat();
     e.preventDefault();
-    return;
   }
 
   // P = previous site
@@ -548,16 +529,12 @@ window.addEventListener("keydown", async (e) => {
     await goAboveSiteFlat();
     await zoomDownFlat();
     e.preventDefault();
-    return;
   }
 
   // T = toggle auto tour
   if (k === "t") {
     autoAdvance = !autoAdvance;
-    orbit = false;
     if (autoAdvance) runTour();
     e.preventDefault();
-    return;
   }
 });
-
