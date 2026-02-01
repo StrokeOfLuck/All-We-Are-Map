@@ -25,6 +25,60 @@ canvas.setAttribute("tabindex", "0");
 canvas.focus();
 
 // -------------------------------
+// Mobile sidebar toggle (hamburger)
+// -------------------------------
+const sidebar = document.getElementById("sidebar");
+const menuToggle = document.getElementById("menuToggle");
+
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 768px)").matches;
+}
+
+function setMenuButtonState(isOpen) {
+  if (!menuToggle) return;
+  menuToggle.textContent = isOpen ? "✕" : "☰";
+  menuToggle.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+}
+
+function closeSidebar() {
+  if (!sidebar) return;
+  sidebar.classList.remove("open");
+  setMenuButtonState(false);
+}
+
+if (menuToggle && sidebar) {
+  // Mobile: toggle sidebar
+  menuToggle.addEventListener("click", (e) => {
+    if (!isMobileLayout()) return;
+    e.stopPropagation();
+    sidebar.classList.toggle("open");
+    setMenuButtonState(sidebar.classList.contains("open"));
+  });
+
+  // Tap/drag on the globe closes the sidebar on mobile
+  const cesiumEl = document.getElementById("cesiumContainer");
+  if (cesiumEl) {
+    cesiumEl.addEventListener("pointerdown", () => {
+      if (isMobileLayout()) closeSidebar();
+    });
+  }
+
+  // If you rotate/resize between desktop and mobile, keep behavior sane
+  window.addEventListener("resize", () => {
+    if (isMobileLayout()) {
+      closeSidebar(); // default closed on mobile
+    } else {
+      // Desktop: sidebar stays visible and button does nothing
+      sidebar.classList.remove("open");
+      setMenuButtonState(false);
+    }
+  });
+
+  // Initial state
+  setMenuButtonState(false);
+}
+
+// -------------------------------
 // Basemap (pick ONE)
 // -------------------------------
 
@@ -66,496 +120,312 @@ const holdSeconds = 3;
 
 // Flat travel orientation
 const flatHeadingDeg = 0;
-const flatPitchDeg = -90;
-
-// Auto tour
-let autoAdvance = true;
 
 // =============================================================
-// DATA + STATE
+// DATA + ENTITIES
 // =============================================================
-const entities = [];
-const siteItems = []; // { name, customerId, lat, lon, entity }
-
+let entities = []; // {name, lat, lon, desc, entity}
 let activeIndex = 0;
+
+let autoAdvance = true;
 let orbit = false;
 let headingDeg = 0;
-let lastPerf = performance.now();
-let isFlying = false;
 
-// =============================================================
-// HELPERS
-// =============================================================
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+
+  const header = lines[0].split(",").map((h) => h.trim());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const raw = lines[i];
+
+    // simple CSV with commas; supports quoted text
+    const parts = [];
+    let cur = "";
+    let inQuotes = false;
+    for (let c = 0; c < raw.length; c++) {
+      const ch = raw[c];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (ch === "," && !inQuotes) {
+        parts.push(cur);
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    parts.push(cur);
+
+    const obj = {};
+    for (let j = 0; j < header.length; j++) obj[header[j]] = (parts[j] || "").trim();
+    rows.push(obj);
+  }
+  return rows;
+}
+
+async function buildEntitiesFromCSV() {
+  let text = "";
+  try {
+    const res = await fetch("./sites.csv", { cache: "no-cache" });
+    if (!res.ok) throw new Error(`Failed to fetch sites.csv: ${res.status}`);
+    text = await res.text();
+  } catch (err) {
+    console.warn("Could not load sites.csv. Using empty list.", err);
+    return;
+  }
+
+  const rows = parseCSV(text);
+
+  entities = rows
+    .map((r) => {
+      const name = r.name || r.Name || r.title || r.Title || "";
+      const lat = parseFloat(r.lat || r.latitude || r.Lat || r.Latitude);
+      const lon = parseFloat(r.lon || r.lng || r.longitude || r.Lon || r.Longitude || r.Lng);
+
+      const desc = r.desc || r.description || r.Desc || r.Description || "";
+      const region = r.region || r.Region || "";
+      const country = r.country || r.Country || "";
+      const sub = [region, country].filter(Boolean).join(" • ");
+
+      if (!name || Number.isNaN(lat) || Number.isNaN(lon)) return null;
+
+      const entity = viewer.entities.add({
+        name,
+        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+        point: {
+          pixelSize: 10,
+          outlineWidth: 2,
+          outlineColor: Cesium.Color.BLACK,
+          color: Cesium.Color.ORANGE,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+        label: {
+          text: name,
+          font: "14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          outlineWidth: 3,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -14),
+          showBackground: true,
+          backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+        description: desc || sub || "",
+      });
+
+      return { name, lat, lon, desc, sub, entity };
+    })
+    .filter(Boolean);
+
+  // Double click on marker zooms in
+  const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+  handler.setInputAction(async (movement) => {
+    const picked = viewer.scene.pick(movement.position);
+    if (!picked || !picked.id) return;
+
+    const idx = entities.findIndex((x) => x.entity === picked.id);
+    if (idx === -1) return;
+
+    autoAdvance = false;
+    orbit = false;
+    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+    activeIndex = idx;
+    await goAboveSiteFlat();
+    await zoomDownFlat();
+
+    // Close sidebar after selecting a site on mobile
+    if (isMobileLayout()) closeSidebar();
+  }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+
+  // Stop tour/orbit when user takes control
+  const stopAuto = () => {
+    autoAdvance = false;
+    orbit = false;
+    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+  };
+  viewer.camera.moveStart.addEventListener(stopAuto);
+  viewer.scene.screenSpaceCameraController.enableLook = true;
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function currentSite() {
+  return entities[clamp(activeIndex, 0, entities.length - 1)];
+}
+
+function cartFromSite(site) {
+  return Cesium.Cartesian3.fromDegrees(site.lon, site.lat);
+}
+
+async function flyToDestination(destination, duration, headingDegArg, pitchDegArg, rangeMetersArg) {
+  return viewer.camera.flyTo({
+    destination,
+    duration,
+    orientation: {
+      heading: Cesium.Math.toRadians(headingDegArg),
+      pitch: Cesium.Math.toRadians(pitchDegArg),
+      roll: 0,
+    },
+  });
+}
+
+async function goAboveSiteFlat() {
+  const site = currentSite();
+  const pos = Cesium.Cartesian3.fromDegrees(site.lon, site.lat, overviewRangeMeters);
+  await viewer.camera.flyTo({
+    destination: pos,
+    duration: travelSeconds,
+    orientation: {
+      heading: Cesium.Math.toRadians(flatHeadingDeg),
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0,
+    },
+  });
+}
+
+async function zoomDownFlat() {
+  const site = currentSite();
+  const pos = Cesium.Cartesian3.fromDegrees(site.lon, site.lat, siteRangeMeters);
+  await viewer.camera.flyTo({
+    destination: pos,
+    duration: zoomInSeconds,
+    orientation: {
+      heading: Cesium.Math.toRadians(0),
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0,
+    },
+  });
+}
+
+async function tiltIntoOrbitPitch() {
+  const site = currentSite();
+  const pos = Cesium.Cartesian3.fromDegrees(site.lon, site.lat, siteRangeMeters);
+  await viewer.camera.flyTo({
+    destination: pos,
+    duration: tiltSeconds,
+    orientation: {
+      heading: Cesium.Math.toRadians(headingDeg),
+      pitch: Cesium.Math.toRadians(orbitPitchDeg),
+      roll: 0,
+    },
+  });
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function getActiveSitePosition() {
-  return entities[activeIndex].position.getValue(Cesium.JulianDate.now());
-}
-
-function setActiveIndexFromEntity(entity) {
-  const idx = entities.indexOf(entity);
-  if (idx !== -1) activeIndex = idx;
-}
-
-// HARD unlock (breaks Cesium lookAt lock in Chrome)
-function hardUnlockCamera() {
-  autoAdvance = false;
-  orbit = false;
-
-  try {
-    viewer.camera.cancelFlight();
-  } catch (_) {}
-
-  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-  canvas.focus();
-}
-
-// Wrap flyToBoundingSphere in a Promise
-function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
-  const target = getActiveSitePosition();
-  const offset = new Cesium.HeadingPitchRange(
-    Cesium.Math.toRadians(headingDegValue),
-    Cesium.Math.toRadians(pitchDeg),
-    rangeMeters
-  );
-
-  isFlying = true;
-
-  return new Promise((resolve) => {
-    viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 1.0), {
-      duration: durationSec,
-      offset,
-      complete: () => {
-        isFlying = false;
-        lastPerf = performance.now();
-        resolve(true);
-      },
-      cancel: () => {
-        isFlying = false;
-        lastPerf = performance.now();
-        resolve(false);
-      },
-    });
-  });
-}
-
-// Travel flat above site
-async function goAboveSiteFlat() {
-  orbit = false;
-  headingDeg = 0;
-  await flyToRange({
-    rangeMeters: overviewRangeMeters,
-    pitchDeg: flatPitchDeg,
-    headingDegValue: flatHeadingDeg,
-    durationSec: travelSeconds / 2,
-  });
-}
-
-// Zoom down flat
-async function zoomDownFlat() {
-  orbit = false;
-  headingDeg = 0;
-  await flyToRange({
-    rangeMeters: siteRangeMeters,
-    pitchDeg: flatPitchDeg,
-    headingDegValue: flatHeadingDeg,
-    durationSec: zoomInSeconds,
-  });
-}
-
-// Tilt into orbit pitch (no rotation yet)
-async function tiltIntoOrbitPitch() {
-  orbit = false;
-  headingDeg = 0;
-  await flyToRange({
-    rangeMeters: siteRangeMeters,
-    pitchDeg: orbitPitchDeg,
-    headingDegValue: 0,
-    durationSec: tiltSeconds,
-  });
-}
-
-// Tilt back flat
-async function tiltBackToFlat() {
-  orbit = false;
-  headingDeg = 0;
-  await flyToRange({
-    rangeMeters: siteRangeMeters,
-    pitchDeg: flatPitchDeg,
-    headingDegValue: flatHeadingDeg,
-    durationSec: tiltSeconds,
-  });
-}
-
-// =============================================================
-// ORBIT LOOP (ONLY when orbit === true)
-// =============================================================
-viewer.clock.onTick.addEventListener(() => {
-  if (!orbit) return;
-  if (isFlying) return;
-
-  const now = performance.now();
-  const dt = Math.min((now - lastPerf) / 1000, 0.05);
-  lastPerf = now;
-
-  headingDeg += orbitSpeedDegPerSec * dt;
-
-  // Orbit uses lookAt, which "locks" camera unless we hardUnlock on user input
-  viewer.camera.lookAt(
-    getActiveSitePosition(),
-    new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(headingDeg),
-      Cesium.Math.toRadians(orbitPitchDeg),
-      siteRangeMeters
-    )
-  );
-});
-
-// =============================================================
-// TOUR LOOP
-// =============================================================
 async function runTour() {
   while (autoAdvance) {
+    // travel above site
     await goAboveSiteFlat();
     if (!autoAdvance) break;
 
+    // zoom down
     await zoomDownFlat();
     if (!autoAdvance) break;
 
+    // tilt into orbit pitch, then orbit for holdSeconds
+    headingDeg = 0;
+    orbit = true;
     await tiltIntoOrbitPitch();
     if (!autoAdvance) break;
 
-    headingDeg = 0;
-    orbit = true;
-    await sleep(holdSeconds * 1000);
+    const start = performance.now();
+    while (orbit && autoAdvance && performance.now() - start < holdSeconds * 1000) {
+      headingDeg += orbitSpeedDegPerSec * (1 / 60);
+      viewer.camera.setView({
+        orientation: {
+          heading: Cesium.Math.toRadians(headingDeg),
+          pitch: Cesium.Math.toRadians(orbitPitchDeg),
+          roll: 0,
+        },
+      });
+      await sleep(1000 / 60);
+    }
 
     orbit = false;
-    await tiltBackToFlat();
     if (!autoAdvance) break;
 
-    await goAboveSiteFlat();
-    if (!autoAdvance) break;
-
+    // advance
     activeIndex = (activeIndex + 1) % entities.length;
   }
 }
 
 // =============================================================
-// CSV LOADING (no dependencies)
-// CSV format:
-// - "Coordinates" is "LAT, LON" (backwards for Cesium)
-// - Cesium needs fromDegrees(LON, LAT)
-// Dedupe: keep latest Year per Customer ID with valid coordinates
+// SIDEBAR LIST + SEARCH
 // =============================================================
-function parseCSV(text) {
-  const rows = [];
-  let row = [];
-  let cur = "";
-  let inQuotes = false;
+let filtered = [];
 
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
+function renderSiteList() {
+  const list = document.getElementById("siteList");
+  if (!list) return;
 
-    if (ch === '"' && inQuotes && next === '"') {
-      cur += '"';
-      i++;
-      continue;
-    }
-
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (ch === "," && !inQuotes) {
-      row.push(cur);
-      cur = "";
-      continue;
-    }
-
-    if ((ch === "\n" || ch === "\r") && !inQuotes) {
-      if (ch === "\r" && next === "\n") i++;
-      row.push(cur);
-      cur = "";
-      if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-      row = [];
-      continue;
-    }
-
-    cur += ch;
-  }
-
-  row.push(cur);
-  if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-
-  return rows;
-}
-
-function toNum(x) {
-  const n = Number(String(x).trim());
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseCoordinatesLatLon(coordStr) {
-  if (!coordStr) return null;
-  const parts = String(coordStr)
-    .replace(/^"+|"+$/g, "")
-    .split(",")
-    .map((s) => s.trim());
-
-  if (parts.length < 2) return null;
-
-  const lat = toNum(parts[0]);
-  const lon = toNum(parts[1]);
-  if (lat == null || lon == null) return null;
-
-  return { lat, lon };
-}
-
-async function buildEntitiesFromCSV() {
-  const res = await fetch("sites.csv");
-  if (!res.ok) {
-    console.error("Failed to fetch sites.csv:", res.status, res.statusText);
-    return;
-  }
-
-  const text = await res.text();
-  const rows = parseCSV(text);
-
-  if (rows.length < 2) {
-    console.warn("sites.csv has no data rows.");
-    return;
-  }
-
-  const headers = rows[0].map((h) =>
-    String(h).replace("\ufeff", "").trim().toLowerCase()
-  );
-
-  const idxCustomerId = headers.indexOf("customer id");
-  const idxCustomerName = headers.indexOf("customer name");
-  const idxYear = headers.indexOf("year");
-  const idxCoordinates = headers.indexOf("coordinates");
-
-  if (idxCoordinates === -1) {
-    console.error('CSV missing required column: "Coordinates"');
-    return;
-  }
-
-  const bestByCustomer = new Map();
-
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-
-    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
-    if (!coord) continue;
-
-    const year = idxYear !== -1 ? toNum(r[idxYear]) : null;
-
-    const customerId =
-      idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
-        ? String(r[idxCustomerId]).trim()
-        : `row-${i}`;
-
-    const name =
-      idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
-        ? String(r[idxCustomerName]).trim()
-        : `Site ${customerId}`;
-
-    const prev = bestByCustomer.get(customerId);
-
-    if (!prev) {
-      bestByCustomer.set(customerId, { name, year, coord });
-      continue;
-    }
-
-    if (year != null && (prev.year == null || year > prev.year)) {
-      bestByCustomer.set(customerId, { name, year, coord });
-    }
-  }
-
-  for (const [customerId, item] of bestByCustomer.entries()) {
-    const { lat, lon } = item.coord;
-
-    const entity = viewer.entities.add({
-      name: item.name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat),
-
-      // --- Tiny ground truth dot (always visible) ---
-      point: {
-        pixelSize: 4,
-        color: Cesium.Color.YELLOW,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
-      },
-
-      // --- Icon above the dot ---
-      billboard: {
-        image: "./icons/solar_pin.png", // use a 64–128px PNG for best crispness
-        width: 28,
-        height: 28,
-        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-
-        // shrink when far away, keep it readable
-        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
-      },
-
-      // --- Label (only when closer) ---
-      label: {
-        text: item.name,
-        font: "20px sans-serif",
-        fillColor: Cesium.Color.WHITE,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 4,
-        showBackground: true,
-        backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
-        pixelOffset: new Cesium.Cartesian2(0, -36),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
-      },
-    });
-
-    entities.push(entity);
-    siteItems.push({ name: item.name, customerId, lat, lon, entity });
-  }
-
-  console.log(`Loaded ${entities.length} unique sites from sites.csv`);
-}
-
-// =============================================================
-// SIDEBAR UI
-// =============================================================
-function flyToSite(entity) {
-  autoAdvance = false;
-  orbit = false;
-
-  setActiveIndexFromEntity(entity);
-
-  // Make sure camera is not locked
-  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-  const pos = entity.position.getValue(Cesium.JulianDate.now());
-
-  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
-    duration: 1.2,
-    offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),
-      Cesium.Math.toRadians(flatPitchDeg),
-      siteRangeMeters
-    ),
-    complete: () => canvas.focus(),
-  });
-}
-
-function renderSiteList(filterText = "") {
-  const listEl = document.getElementById("siteList");
-  if (!listEl) return;
-
-  listEl.innerHTML = "";
-
-  const q = filterText.trim().toLowerCase();
-  const filtered = q
-    ? siteItems.filter(
-        (s) =>
-          (s.name || "").toLowerCase().includes(q) ||
-          (s.customerId || "").toLowerCase().includes(q)
-      )
-    : siteItems;
-
-  filtered.forEach((s) => {
+  list.innerHTML = "";
+  filtered.forEach((s, idx) => {
     const row = document.createElement("div");
     row.className = "siteRow";
     row.innerHTML = `
       <div>${s.name}</div>
-      <div class="siteSub">ID: ${s.customerId}</div>
+      ${s.sub ? `<div class="siteSub">${s.sub}</div>` : ""}
     `;
-    row.addEventListener("click", () => flyToSite(s.entity));
-    listEl.appendChild(row);
+    row.addEventListener("click", async () => {
+      autoAdvance = false;
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      activeIndex = entities.indexOf(s);
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+
+      // Close sidebar after selecting a site on mobile
+      if (isMobileLayout()) closeSidebar();
+    });
+    list.appendChild(row);
   });
 }
 
 function wireSearchBox() {
   const input = document.getElementById("siteSearch");
   if (!input) return;
-  input.addEventListener("input", () => renderSiteList(input.value));
+
+  filtered = entities.slice();
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) {
+      filtered = entities.slice();
+    } else {
+      filtered = entities.filter((s) => {
+        const hay = `${s.name} ${s.sub || ""}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    renderSiteList();
+  });
 }
 
 // =============================================================
-// CHROME-SAFE DOUBLE CLICK (uses LEFT_CLICK timing)
+// KEYBOARD SHORTCUTS (H/T/R/N/P)
 // =============================================================
-
-// Disable Cesium default dblclick zoom (optional)
-viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
-  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
-);
-
-let lastClickAt = 0;
-const DOUBLE_CLICK_MS = 320;
-
-const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-safeClickHandler.setInputAction((movement) => {
-  const now = performance.now();
-  const isDouble = now - lastClickAt < DOUBLE_CLICK_MS;
-  lastClickAt = now;
-
-  if (!isDouble) return;
-
-  const picked = viewer.scene.pick(movement.position);
-  if (!picked || !picked.id || !picked.id.position) return;
-
-  flyToSite(picked.id);
-}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
-// =============================================================
-// CHROME HARD-UNLOCK (DOM capture phase)
-// Makes click+drag ALWAYS break orbit/tour in Chrome.
-// =============================================================
-canvas.addEventListener(
-  "pointerdown",
-  (e) => {
-    if (e.target !== canvas) return;
-    hardUnlockCamera();
-  },
-  true
-);
-
-canvas.addEventListener(
-  "wheel",
-  (e) => {
-    if (e.target !== canvas) return;
-    hardUnlockCamera();
-  },
-  { capture: true, passive: true }
-);
-
-canvas.addEventListener(
-  "touchstart",
-  (e) => {
-    if (e.target !== canvas) return;
-    hardUnlockCamera();
-  },
-  { capture: true, passive: true }
-);
-
-// =============================================================
-// KEYBOARD SHORTCUTS (capture mode so UI can't swallow them)
-// - Allows typing in search normally, except shortcut keys.
-// =============================================================
-window.addEventListener(
+document.addEventListener(
   "keydown",
   async (e) => {
+    const k = (e.key || "").toLowerCase();
+
     const active = document.activeElement;
     const isSearch = active && active.id === "siteSearch";
 
-    const k = e.key.toLowerCase();
-    const isShortcut = k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
+    const isShortcut = ["h", "t", "r", "n", "p"].includes(k);
 
-    // Let typing work in search box unless it's a shortcut
+    // If typing in search, ignore shortcuts unless it's a shortcut
     if (isSearch && !isShortcut) return;
 
     // If shortcut pressed while search focused, blur search and re-focus canvas
@@ -635,6 +505,7 @@ window.addEventListener(
   await buildEntitiesFromCSV();
 
   wireSearchBox();
+  filtered = entities.slice();
   renderSiteList();
 
   if (entities.length === 0) {
