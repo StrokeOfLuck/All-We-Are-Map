@@ -378,7 +378,7 @@ async function buildEntitiesFromCSV() {
       name: item.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
       model: {
-        uri: "./models/cc0_light_bulb.glb",
+        uri: "./models/cartoon_low_poly_solar_panel.glb",
         minimumPixelSize: 100,
         maximumScale: 200,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
