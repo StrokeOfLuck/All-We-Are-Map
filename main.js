@@ -378,7 +378,7 @@ async function buildEntitiesFromCSV() {
       name: item.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
       model: {
-        uri: "./models/solar_panel.glb",
+        uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
       
         // REMOVE minimumPixelSize (this is the usual culprit for “giant stuff”)
         // minimumPixelSize: 100,
