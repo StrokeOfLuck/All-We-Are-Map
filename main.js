@@ -377,6 +377,17 @@ async function buildEntitiesFromCSV() {
     const entity = viewer.entities.add({
     name: item.name,
     position: Cesium.Cartesian3.fromDegrees(lon, lat),
+
+    // ✅ Yellow circle that stays visible at any distance
+    point: {
+      pixelSize: 10,                         // dot size on screen
+      color: Cesium.Color.YELLOW,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 2,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY, // draw on top of terrain
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7), // show far away
+    },
+      
     model: {
       uri: "./models/low_poly_light_bulb_by_AleixoAlonso.glb",
       scale: 1000.0,
@@ -386,6 +397,20 @@ async function buildEntitiesFromCSV() {
     
       shadows: Cesium.ShadowMode.DISABLED,
     },
+    // (Optional) label that only appears when closer
+    label: {
+      text: item.name,
+      font: "14px sans-serif",
+      fillColor: Cesium.Color.WHITE,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 3,
+      pixelOffset: new Cesium.Cartesian2(0, -22),
+      showBackground: true,
+      backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250000), // only when closer
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+      
     });
 
     entities.push(entity);
