@@ -392,18 +392,26 @@ async function runTour() {
 // =============================================================
 // SIDEBAR UI (list + search + click-to-fly)
 // =============================================================
+
+function setActiveIndexFromEntity(entity) {
+  const idx = entities.indexOf(entity);
+  if (idx !== -1) activeIndex = idx;
+}
+
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
+
+  setActiveIndexFromEntity(entity);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
 
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.8,
     offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),           // north-up
-      Cesium.Math.toRadians(flatPitchDeg),// straight down
-      siteRangeMeters                     // your distance
+      Cesium.Math.toRadians(0),
+      Cesium.Math.toRadians(flatPitchDeg),
+      siteRangeMeters
     ),
   });
 }
