@@ -709,12 +709,10 @@ function updateTourButton() {
   }
 
   function applyInitialSidebarState() {
-    // Desktop open, mobile closed
-    if (mqMobile.matches) sidebar.classList.add("sidebarClosed");
-    else sidebar.classList.remove("sidebarClosed");
+    // Start CLOSED on all devices
+    sidebar.classList.add("sidebarClosed");
     updateMenuButton();
   }
-
   function updateMenuButton() {
     // show ☰ when closed, ✕ when open
     menuBtn.textContent = isClosed() ? "☰" : "✕";
