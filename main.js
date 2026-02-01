@@ -79,9 +79,9 @@ const overviewRangeMeters = 13500000; // how far OUT between sites (Uganda view)
 const siteRangeMeters = 1200;       // how close IN at the site
 
 // Travel behavior
-const travelSeconds = 0.5;          // "move above next site" + "zoom out"
-const zoomInSeconds = 1.5;          // zooming down flat
-const tiltSeconds = 0.3;            // how fast it tilts into orbit pitch
+const travelSeconds = 2.5;          // "move above next site" + "zoom out"
+const zoomInSeconds = 2.5;          // zooming down flat
+const tiltSeconds = 1.3;            // how fast it tilts into orbit pitch
 
 // Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;          // the tilt angle once at the site
