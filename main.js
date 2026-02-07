@@ -253,7 +253,7 @@ async function runTour() {
 // One row = one customer bubble
 // =============================================================
 async function buildEntitiesFromCSV() {
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
+  const CSV_URL = encodeURI("Impact_Map_Export - Sheet1.csv");
 
   const res = await fetch(CSV_URL);
   if (!res.ok) {
