@@ -281,7 +281,7 @@ async function buildEntitiesFromCSV() {
   }
 
   const text = await res.text();
-  const rows = parseCSV(text);
+  const rows = text.split(/\r?\n/).map(line => line.split(","));
 
   console.log("CSV rows loaded:", rows.length);
   if (rows.length < 2) {
