@@ -269,33 +269,21 @@ function toNum(x) {
 // Auto-detect delimiter: TSV (tabs) vs CSV (commas)
 // - If TSV, split by tabs per line
 // - If CSV, fall back to your existing parseCSV(text) for quoted CSV support
-function parseCSVAuto(text) {
-  const firstLine = (text.split(/\r?\n/)[0] || "");
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const tabCount = (firstLine.match(/\t/g) || []).length;
-
-  if (tabCount > commaCount) {
-    return text
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length)
-      .map((line) => line.split("\t"));
-  }
-
-  return parseCSV(text);
-}
-
 async function buildEntitiesFromCSV() {
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
-  const res = await fetch(CSV_URL);
+  // ✅ IMPORTANT: encode spaces for GitHub Pages
+  const res = await fetch(encodeURI(CSV_URL));
+
   if (!res.ok) {
     console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
     return;
   }
 
   const text = await res.text();
-  const rows = parseCSVAuto(text);
+  const rows = parseCSV(text);
 
+  console.log("CSV rows loaded:", rows.length);
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
     return;
@@ -307,35 +295,26 @@ async function buildEntitiesFromCSV() {
 
   const idx = (name) => headers.indexOf(String(name).toLowerCase());
 
-  // NOTE: your export contains repeated blocks of Customer/System columns.
-  // We only need the first Customer ID + Customer Name, plus Latitude/Longitude.
-  const idxCustomerId = idx("customer id");
+  const idxCustomerId   = idx("customer id");
   const idxCustomerName = idx("customer name");
-  const idxLat = idx("latitude");
-  const idxLon = idx("longitude");
+  const idxLat          = idx("latitude");   // your header has "Latitude " but trim() fixes it
+  const idxLon          = idx("longitude");
 
-  console.log("CSV header index check:", {
-    idxCustomerId,
-    idxCustomerName,
-    idxLat,
-    idxLon,
-  });
+  console.log("Header indices:", { idxCustomerId, idxCustomerName, idxLat, idxLon });
 
   if (idxLat === -1 || idxLon === -1) {
-    console.error(
-      'CSV missing required columns: "Latitude" and/or "Longitude". Headers found:',
-      headers
-    );
+    console.error('CSV missing required columns: "Latitude" and/or "Longitude"');
+    console.log("Headers:", headers);
     return;
   }
+
+  let added = 0;
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
     const lat = toNum(r[idxLat]);
     const lon = toNum(r[idxLon]);
-
-    // Skip rows without usable coordinates
     if (lat == null || lon == null) continue;
 
     const customerId =
@@ -350,7 +329,7 @@ async function buildEntitiesFromCSV() {
 
     const entity = viewer.entities.add({
       name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat), // (lon, lat)
+      position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
       point: {
         pixelSize: 4,
@@ -358,7 +337,6 @@ async function buildEntitiesFromCSV() {
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
       billboard: {
@@ -367,7 +345,6 @@ async function buildEntitiesFromCSV() {
         height: 28,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
       label: {
@@ -380,17 +357,16 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
         pixelOffset: new Cesium.Cartesian2(0, -36),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
       },
     });
 
     entities.push(entity);
     siteItems.push({ name, customerId, lat, lon, entity });
+    added++;
   }
 
-  console.log(`Loaded ${entities.length} customers from ${CSV_URL}`);
+  console.log(`Loaded ${added} points from ${CSV_URL}`);
 
-  // Optional: if points loaded, zoom to them once
   if (entities.length > 0) {
     viewer.zoomTo(viewer.entities);
   }
