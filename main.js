@@ -467,7 +467,47 @@ async function buildEntitiesFromCSV() {
   }
 }
 
+// =============================================================
+// SIDEBAR UI
+// =============================================================
+function flyToSite(entity) {
+  autoAdvance = false;
+  orbit = false;
+  tourRunId++; // stop any running tour loop
+  updateTourButton();
 
+  setActiveIndexFromEntity(entity);
+
+  // Make sure camera is not locked
+  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+  // Cancel any in-progress flight
+  try { viewer.camera.cancelFlight(); } catch (_) {}
+
+  // ---- sync state so tour/orbit doesn't get weird after click ----
+  isFlying = true;
+
+  const pos = entity.position.getValue(Cesium.JulianDate.now());
+
+  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
+    duration: 1.2,
+    offset: new Cesium.HeadingPitchRange(
+      Cesium.Math.toRadians(0),
+      Cesium.Math.toRadians(flatPitchDeg),
+      siteRangeMeters
+    ),
+    complete: () => {
+      isFlying = false;
+      lastPerf = performance.now();
+      canvas.focus();
+    },
+    cancel: () => {
+      isFlying = false;
+      lastPerf = performance.now();
+      canvas.focus();
+    },
+  });
+}
 
 // =============================================================
 // CHROME HARD-UNLOCK (DOM capture phase)
