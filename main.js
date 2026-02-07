@@ -251,14 +251,17 @@ async function runTour() {
 
 // =============================================================
 // CSV LOADING (no dependencies)
-// Works with BOTH comma-CSV and tab-TSV exports.
-// Uses Latitude + Longitude columns (already computed in Sheets).
-// Notes:
-// - Cesium wants fromDegrees(LON, LAT)
-// - Your filename has spaces, so fetch uses encodeURI()
+// CSV format:
+// - "Coordinates" is "LAT, LON" (backwards for Cesium)
+// - Cesium needs fromDegrees(LON, LAT)
+// Dedupe: keep latest Year per Customer ID with valid coordinates
+//
+// ✅ Important:
+// - This block does NOT move the camera (no zoomTo / flyTo).
+// - It CAN optionally auto-start the tour once points exist.
 // =============================================================
 
-// ---------- Parsers / helpers ----------
+// ---------- CSV parser ----------
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -304,42 +307,41 @@ function parseCSV(text) {
   return rows;
 }
 
-function parseTSV(text) {
-  return text
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length)
-    .map((line) => line.split("\t"));
-}
-
-function parseCSVAuto(text) {
-  const firstLine = (text.split(/\r?\n/)[0] || "");
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const tabCount = (firstLine.match(/\t/g) || []).length;
-
-  // If it looks like TSV, treat it as TSV
-  if (tabCount > commaCount) return parseTSV(text);
-
-  // Otherwise use quoted CSV parser
-  return parseCSV(text);
-}
-
+// ---------- helpers ----------
 function toNum(x) {
   if (x == null) return null;
   const s = String(x)
-    .replace(/\u00A0/g, " ") // non-breaking spaces
+    .replace(/\u00A0/g, " ")
     .trim()
-    .replace(/,/g, ""); // remove thousands separators
-  if (s === "") return null;
+    .replace(/,/g, ""); // allow "1,234.56"
+  if (!s) return null;
 
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
-// ---------- Loader ----------
+function parseCoordinatesLatLon(coordStr) {
+  if (!coordStr) return null;
+
+  const parts = String(coordStr)
+    .replace(/^"+|"+$/g, "")
+    .split(",")
+    .map((s) => s.trim());
+
+  if (parts.length < 2) return null;
+
+  const lat = toNum(parts[0]);
+  const lon = toNum(parts[1]);
+  if (lat == null || lon == null) return null;
+
+  return { lat, lon };
+}
+
+// ---------- loader ----------
 async function buildEntitiesFromCSV() {
+  // ✅ Use your actual file name if you changed it in the repo
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
-  // Spaces in filename are common on GH Pages; encodeURI prevents 404s.
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
     console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
@@ -347,9 +349,8 @@ async function buildEntitiesFromCSV() {
   }
 
   const text = await res.text();
-  const rows = parseCSVAuto(text);
+  const rows = parseCSV(text);
 
-  console.log("CSV/TSV rows loaded:", rows.length);
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
     return;
@@ -359,54 +360,59 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idxFirst = (name) => headers.indexOf(String(name).toLowerCase());
+  const idxCustomerId = headers.indexOf("customer id");
+  const idxCustomerName = headers.indexOf("customer name");
+  const idxYear = headers.indexOf("year");
+  const idxCoordinates = headers.indexOf("coordinates");
 
-  // Your export repeats some column names; we use the FIRST occurrence of these.
-  const idxCustomerId = idxFirst("customer id");
-  const idxCustomerName = idxFirst("customer name");
-  const idxLat = idxFirst("latitude");
-  const idxLon = idxFirst("longitude");
-
-  console.log("Header indices:", { idxCustomerId, idxCustomerName, idxLat, idxLon });
-
-  if (idxLat === -1 || idxLon === -1) {
-    console.error('CSV missing required columns: "Latitude" and/or "Longitude"');
+  if (idxCoordinates === -1) {
+    console.error('CSV missing required column: "Coordinates"');
     console.log("Headers found:", headers);
     return;
   }
 
-  // Optional de-dupe by customerId (keep first valid lat/lon encountered)
-  // If your file has many repeated rows per customer, this prevents duplicates.
-  const seen = new Set();
-
-  let added = 0;
+  // keep latest Year per Customer ID
+  const bestByCustomer = new Map();
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
-    const lat = toNum(r[idxLat]);
-    const lon = toNum(r[idxLon]);
-    if (lat == null || lon == null) continue;
+    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
+    if (!coord) continue;
+
+    const year = idxYear !== -1 ? toNum(r[idxYear]) : null;
 
     const customerId =
       idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
         ? String(r[idxCustomerId]).trim()
         : `row-${i}`;
 
-    // De-dupe: one point per customer
-    if (seen.has(customerId)) continue;
-    seen.add(customerId);
-
     const name =
       idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
         ? String(r[idxCustomerName]).trim()
-        : `Customer ${customerId}`;
+        : `Site ${customerId}`;
+
+    const prev = bestByCustomer.get(customerId);
+
+    if (!prev) {
+      bestByCustomer.set(customerId, { name, year, coord });
+      continue;
+    }
+
+    // choose newest year (or first if no year)
+    if (year != null && (prev.year == null || year > prev.year)) {
+      bestByCustomer.set(customerId, { name, year, coord });
+    }
+  }
+
+  // build entities
+  for (const [customerId, item] of bestByCustomer.entries()) {
+    const { lat, lon } = item.coord;
 
     const entity = viewer.entities.add({
-      name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat), // (lon, lat)
+      name: item.name,
+      position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
-      // --- Tiny ground truth dot ---
       point: {
         pixelSize: 4,
         color: Cesium.Color.YELLOW,
@@ -416,7 +422,6 @@ async function buildEntitiesFromCSV() {
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
-      // --- Icon above the dot ---
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -426,9 +431,8 @@ async function buildEntitiesFromCSV() {
         scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
-      // --- Label (only when closer) ---
       label: {
-        text: name,
+        text: item.name,
         font: "20px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
@@ -442,17 +446,27 @@ async function buildEntitiesFromCSV() {
     });
 
     entities.push(entity);
-    siteItems.push({ name, customerId, lat, lon, entity });
-    added++;
+    siteItems.push({ name: item.name, customerId, lat, lon, entity });
   }
 
-  console.log(`Loaded ${added} customer points from ${CSV_URL}`);
+  console.log(`Loaded ${entities.length} unique sites from ${CSV_URL}`);
 
-  // Zoom once so you can immediately see points (helpful for debugging)
+  // ✅ Auto-start the tour AFTER points exist
+  // (If your init() already starts it, this won’t hurt, but it may double-start
+  // if your init also calls runTourGuarded. If that happens, delete ONE of them.)
   if (entities.length > 0) {
-    viewer.zoomTo(viewer.entities);
+    // If your project uses the guarded tour:
+    if (typeof runTourGuarded === "function") {
+      autoAdvance = true;
+      runTourGuarded();
+    } else if (typeof runTour === "function") {
+      // fallback for older builds
+      autoAdvance = true;
+      runTour();
+    }
   }
 }
+
 
 
 // =============================================================
