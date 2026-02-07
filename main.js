@@ -473,19 +473,13 @@ async function buildEntitiesFromCSV() {
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
-  tourRunId++; // stop any running tour loop
+  tourRunId++;          // stop any running tour loop
   updateTourButton();
 
   setActiveIndexFromEntity(entity);
 
   // Make sure camera is not locked
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-  // Cancel any in-progress flight
-  try { viewer.camera.cancelFlight(); } catch (_) {}
-
-  // ---- sync state so tour/orbit doesn't get weird after click ----
-  isFlying = true;
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
 
@@ -496,17 +490,46 @@ function flyToSite(entity) {
       Cesium.Math.toRadians(flatPitchDeg),
       siteRangeMeters
     ),
-    complete: () => {
-      isFlying = false;
-      lastPerf = performance.now();
-      canvas.focus();
-    },
-    cancel: () => {
-      isFlying = false;
-      lastPerf = performance.now();
-      canvas.focus();
-    },
+    complete: () => canvas.focus(),
   });
+}
+
+function renderSiteList(filterText = "") {
+  const listEl = document.getElementById("siteList");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
+
+  const q = filterText.trim().toLowerCase();
+  const filtered = q
+    ? siteItems.filter(
+        (s) =>
+          (s.name || "").toLowerCase().includes(q) ||
+          (s.customerId || "").toLowerCase().includes(q)
+      )
+    : siteItems;
+
+  filtered.forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "siteRow";
+    row.innerHTML = `
+      <div>${s.name}</div>
+      <div class="siteSub">ID: ${s.customerId}</div>
+    `;
+    
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      flyToSite(s.entity);
+    });
+
+    listEl.appendChild(row);
+  });
+}
+
+function wireSearchBox() {
+  const input = document.getElementById("siteSearch");
+  if (!input) return;
+  input.addEventListener("input", () => renderSiteList(input.value));
 }
 
 // =============================================================
