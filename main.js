@@ -255,76 +255,12 @@ async function runTour() {
 // - Cesium needs fromDegrees(LON, LAT)
 // Dedupe: keep latest Year per Customer ID with valid coordinates
 // =============================================================
-function parseCSV(text) {
-  const rows = [];
-  let row = [];
-  let cur = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (ch === '"' && inQuotes && next === '"') {
-      cur += '"';
-      i++;
-      continue;
-    }
-
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (ch === "," && !inQuotes) {
-      row.push(cur);
-      cur = "";
-      continue;
-    }
-
-    if ((ch === "\n" || ch === "\r") && !inQuotes) {
-      if (ch === "\r" && next === "\n") i++;
-      row.push(cur);
-      cur = "";
-      if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-      row = [];
-      continue;
-    }
-
-    cur += ch;
-  }
-
-  row.push(cur);
-  if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-
-  return rows;
-}
-
-function toNum(x) {
-  const n = Number(String(x).trim());
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseCoordinatesLatLon(coordStr) {
-  if (!coordStr) return null;
-  const parts = String(coordStr)
-    .replace(/^"+|"+$/g, "")
-    .split(",")
-    .map((s) => s.trim());
-
-  if (parts.length < 2) return null;
-
-  const lat = toNum(parts[0]);
-  const lon = toNum(parts[1]);
-  if (lat == null || lon == null) return null;
-
-  return { lat, lon };
-}
-
 async function buildEntitiesFromCSV() {
-  const res = await fetch("sites.csv");
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
+
+  const res = await fetch(CSV_URL);
   if (!res.ok) {
-    console.error("Failed to fetch sites.csv:", res.status, res.statusText);
+    console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
     return;
   }
 
@@ -332,33 +268,32 @@ async function buildEntitiesFromCSV() {
   const rows = parseCSV(text);
 
   if (rows.length < 2) {
-    console.warn("sites.csv has no data rows.");
+    console.warn(`${CSV_URL} has no data rows.`);
     return;
   }
 
-  const headers = rows[0].map((h) =>
+  const headers = rows[0].map(h =>
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idxCustomerId = headers.indexOf("customer id");
-  const idxCustomerName = headers.indexOf("customer name");
-  const idxYear = headers.indexOf("year");
-  const idxCoordinates = headers.indexOf("coordinates");
+  const idx = (name) => headers.indexOf(name.toLowerCase());
 
-  if (idxCoordinates === -1) {
-    console.error('CSV missing required column: "Coordinates"');
+  const idxCustomerId   = idx("customer id");
+  const idxCustomerName = idx("customer name");
+  const idxLat          = idx("latitude");
+  const idxLon          = idx("longitude");
+
+  if (idxLat === -1 || idxLon === -1) {
+    console.error('CSV missing required columns: Latitude / Longitude');
     return;
   }
-
-  const bestByCustomer = new Map();
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
-    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
-    if (!coord) continue;
-
-    const year = idxYear !== -1 ? toNum(r[idxYear]) : null;
+    const lat = toNum(r[idxLat]);
+    const lon = toNum(r[idxLon]);
+    if (lat == null || lon == null) continue;
 
     const customerId =
       idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
@@ -368,52 +303,31 @@ async function buildEntitiesFromCSV() {
     const name =
       idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
         ? String(r[idxCustomerName]).trim()
-        : `Site ${customerId}`;
-
-    const prev = bestByCustomer.get(customerId);
-
-    if (!prev) {
-      bestByCustomer.set(customerId, { name, year, coord });
-      continue;
-    }
-
-    if (year != null && (prev.year == null || year > prev.year)) {
-      bestByCustomer.set(customerId, { name, year, coord });
-    }
-  }
-
-  for (const [customerId, item] of bestByCustomer.entries()) {
-    const { lat, lon } = item.coord;
+        : `Customer ${customerId}`;
 
     const entity = viewer.entities.add({
-      name: item.name,
+      name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
-      // --- Tiny ground truth dot (always visible) ---
       point: {
         pixelSize: 4,
         color: Cesium.Color.YELLOW,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
-      // --- Icon above the dot ---
       billboard: {
-        image: "./icons/solar_pin.png", // use a 64–128px PNG for best crispness
+        image: "./icons/solar_pin.png",
         width: 28,
         height: 28,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-
-        // shrink when far away, keep it readable
-        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
+        scaleByDistance: new Cesium.NearFarScalar(1_000, 1.0, 5_000_000, 0.4),
       },
 
-      // --- Label (only when closer) ---
       label: {
-        text: item.name,
+        text: name,
         font: "20px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
@@ -427,11 +341,12 @@ async function buildEntitiesFromCSV() {
     });
 
     entities.push(entity);
-    siteItems.push({ name: item.name, customerId, lat, lon, entity });
+    siteItems.push({ name, customerId, lat, lon, entity });
   }
 
-  console.log(`Loaded ${entities.length} unique sites from sites.csv`);
+  console.log(`Loaded ${entities.length} customers from ${CSV_URL}`);
 }
+
 
 // =============================================================
 // SIDEBAR UI
