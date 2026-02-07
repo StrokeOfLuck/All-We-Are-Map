@@ -533,6 +533,31 @@ function wireSearchBox() {
 }
 
 // =============================================================
+// CHROME-SAFE DOUBLE CLICK (uses LEFT_CLICK timing)
+// =============================================================
+
+// Disable Cesium default dblclick zoom (optional)
+viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
+  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+);
+
+let lastClickAt = 0;
+const DOUBLE_CLICK_MS = 320;
+
+const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+safeClickHandler.setInputAction((movement) => {
+  const now = performance.now();
+  const isDouble = now - lastClickAt < DOUBLE_CLICK_MS;
+  lastClickAt = now;
+
+  if (!isDouble) return;
+
+  const picked = viewer.scene.pick(movement.position);
+  if (!picked || !picked.id || !picked.id.position) return;
+
+  flyToSite(picked.id);
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+// =============================================================
 // CHROME HARD-UNLOCK (DOM capture phase)
 // Makes click+drag ALWAYS break orbit/tour in Chrome.
 // =============================================================
