@@ -272,19 +272,20 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  const headers = rows[0].map(h =>
+  const headers = rows[0].map((h) =>
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idx = (name) => headers.indexOf(name.toLowerCase());
+  const idx = (name) => headers.indexOf(String(name).toLowerCase());
 
-  const idxCustomerId   = idx("customer id");
-  const idxCustomerName = idx("customer name");
+  // Your file has repeated "Customer ID" blocks, but Latitude/Longitude are unique.
+  const idxCustomerId   = idx("customer id");     // first occurrence is fine
+  const idxCustomerName = idx("customer name");   // should be unique
   const idxLat          = idx("latitude");
   const idxLon          = idx("longitude");
 
   if (idxLat === -1 || idxLon === -1) {
-    console.error('CSV missing required columns: Latitude / Longitude');
+    console.error('CSV missing required columns: "Latitude" and/or "Longitude"');
     return;
   }
 
@@ -307,7 +308,7 @@ async function buildEntitiesFromCSV() {
 
     const entity = viewer.entities.add({
       name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat),
+      position: Cesium.Cartesian3.fromDegrees(lon, lat), // Cesium wants (lon, lat)
 
       point: {
         pixelSize: 4,
@@ -315,6 +316,7 @@ async function buildEntitiesFromCSV() {
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
       billboard: {
@@ -323,7 +325,7 @@ async function buildEntitiesFromCSV() {
         height: 28,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new Cesium.NearFarScalar(1_000, 1.0, 5_000_000, 0.4),
+        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
       label: {
@@ -346,98 +348,6 @@ async function buildEntitiesFromCSV() {
 
   console.log(`Loaded ${entities.length} customers from ${CSV_URL}`);
 }
-
-
-// =============================================================
-// SIDEBAR UI
-// =============================================================
-function flyToSite(entity) {
-  autoAdvance = false;
-  orbit = false;
-  tourRunId++;          // stop any running tour loop
-  updateTourButton();
-
-  setActiveIndexFromEntity(entity);
-
-  // Make sure camera is not locked
-  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-  const pos = entity.position.getValue(Cesium.JulianDate.now());
-
-  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
-    duration: 1.2,
-    offset: new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(0),
-      Cesium.Math.toRadians(flatPitchDeg),
-      siteRangeMeters
-    ),
-    complete: () => canvas.focus(),
-  });
-}
-
-function renderSiteList(filterText = "") {
-  const listEl = document.getElementById("siteList");
-  if (!listEl) return;
-
-  listEl.innerHTML = "";
-
-  const q = filterText.trim().toLowerCase();
-  const filtered = q
-    ? siteItems.filter(
-        (s) =>
-          (s.name || "").toLowerCase().includes(q) ||
-          (s.customerId || "").toLowerCase().includes(q)
-      )
-    : siteItems;
-
-  filtered.forEach((s) => {
-    const row = document.createElement("div");
-    row.className = "siteRow";
-    row.innerHTML = `
-      <div>${s.name}</div>
-      <div class="siteSub">ID: ${s.customerId}</div>
-    `;
-    
-    row.addEventListener("click", (e) => {
-      e.stopPropagation();
-      flyToSite(s.entity);
-    });
-
-    listEl.appendChild(row);
-  });
-}
-
-function wireSearchBox() {
-  const input = document.getElementById("siteSearch");
-  if (!input) return;
-  input.addEventListener("input", () => renderSiteList(input.value));
-}
-
-// =============================================================
-// CHROME-SAFE DOUBLE CLICK (uses LEFT_CLICK timing)
-// =============================================================
-
-// Disable Cesium default dblclick zoom (optional)
-viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
-  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
-);
-
-let lastClickAt = 0;
-const DOUBLE_CLICK_MS = 320;
-
-const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-safeClickHandler.setInputAction((movement) => {
-  const now = performance.now();
-  const isDouble = now - lastClickAt < DOUBLE_CLICK_MS;
-  lastClickAt = now;
-
-  if (!isDouble) return;
-
-  const picked = viewer.scene.pick(movement.position);
-  if (!picked || !picked.id || !picked.id.position) return;
-
-  flyToSite(picked.id);
-}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
 // =============================================================
 // CHROME HARD-UNLOCK (DOM capture phase)
