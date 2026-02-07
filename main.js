@@ -248,42 +248,108 @@ async function runTour() {
   }
 }
 
+
 // =============================================================
-// CSV LOADING (Latitude / Longitude already computed in Sheets)
-// Works for BOTH comma-CSV and tab-TSV exports.
-// One row = one customer bubble
+// CSV LOADING (no dependencies)
+// Works with BOTH comma-CSV and tab-TSV exports.
+// Uses Latitude + Longitude columns (already computed in Sheets).
+// Notes:
+// - Cesium wants fromDegrees(LON, LAT)
+// - Your filename has spaces, so fetch uses encodeURI()
 // =============================================================
 
-// More forgiving number parser (handles weird spaces, thousands commas)
+// ---------- Parsers / helpers ----------
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (ch === '"' && inQuotes && next === '"') {
+      cur += '"';
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      row.push(cur);
+      cur = "";
+      continue;
+    }
+
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (ch === "\r" && next === "\n") i++;
+      row.push(cur);
+      cur = "";
+      if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
+      row = [];
+      continue;
+    }
+
+    cur += ch;
+  }
+
+  row.push(cur);
+  if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
+
+  return rows;
+}
+
+function parseTSV(text) {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length)
+    .map((line) => line.split("\t"));
+}
+
+function parseCSVAuto(text) {
+  const firstLine = (text.split(/\r?\n/)[0] || "");
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const tabCount = (firstLine.match(/\t/g) || []).length;
+
+  // If it looks like TSV, treat it as TSV
+  if (tabCount > commaCount) return parseTSV(text);
+
+  // Otherwise use quoted CSV parser
+  return parseCSV(text);
+}
+
 function toNum(x) {
   if (x == null) return null;
   const s = String(x)
     .replace(/\u00A0/g, " ") // non-breaking spaces
     .trim()
-    .replace(/,/g, ""); // remove thousands commas if any
+    .replace(/,/g, ""); // remove thousands separators
   if (s === "") return null;
+
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
-// Auto-detect delimiter: TSV (tabs) vs CSV (commas)
-// - If TSV, split by tabs per line
-// - If CSV, fall back to your existing parseCSV(text) for quoted CSV support
+// ---------- Loader ----------
 async function buildEntitiesFromCSV() {
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
-  // ✅ IMPORTANT: encode spaces for GitHub Pages
+  // Spaces in filename are common on GH Pages; encodeURI prevents 404s.
   const res = await fetch(encodeURI(CSV_URL));
-
   if (!res.ok) {
     console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
     return;
   }
 
   const text = await res.text();
-  const rows = text.split(/\r?\n/).map(line => line.split(","));
+  const rows = parseCSVAuto(text);
 
-  console.log("CSV rows loaded:", rows.length);
+  console.log("CSV/TSV rows loaded:", rows.length);
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
     return;
@@ -293,20 +359,25 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idx = (name) => headers.indexOf(String(name).toLowerCase());
+  const idxFirst = (name) => headers.indexOf(String(name).toLowerCase());
 
-  const idxCustomerId   = idx("customer id");
-  const idxCustomerName = idx("customer name");
-  const idxLat          = idx("latitude");   // your header has "Latitude " but trim() fixes it
-  const idxLon          = idx("longitude");
+  // Your export repeats some column names; we use the FIRST occurrence of these.
+  const idxCustomerId = idxFirst("customer id");
+  const idxCustomerName = idxFirst("customer name");
+  const idxLat = idxFirst("latitude");
+  const idxLon = idxFirst("longitude");
 
   console.log("Header indices:", { idxCustomerId, idxCustomerName, idxLat, idxLon });
 
   if (idxLat === -1 || idxLon === -1) {
     console.error('CSV missing required columns: "Latitude" and/or "Longitude"');
-    console.log("Headers:", headers);
+    console.log("Headers found:", headers);
     return;
   }
+
+  // Optional de-dupe by customerId (keep first valid lat/lon encountered)
+  // If your file has many repeated rows per customer, this prevents duplicates.
+  const seen = new Set();
 
   let added = 0;
 
@@ -322,6 +393,10 @@ async function buildEntitiesFromCSV() {
         ? String(r[idxCustomerId]).trim()
         : `row-${i}`;
 
+    // De-dupe: one point per customer
+    if (seen.has(customerId)) continue;
+    seen.add(customerId);
+
     const name =
       idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
         ? String(r[idxCustomerName]).trim()
@@ -329,24 +404,29 @@ async function buildEntitiesFromCSV() {
 
     const entity = viewer.entities.add({
       name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat),
+      position: Cesium.Cartesian3.fromDegrees(lon, lat), // (lon, lat)
 
+      // --- Tiny ground truth dot ---
       point: {
         pixelSize: 4,
         color: Cesium.Color.YELLOW,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
+      // --- Icon above the dot ---
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
         height: 28,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
+      // --- Label (only when closer) ---
       label: {
         text: name,
         font: "20px sans-serif",
@@ -357,6 +437,7 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
         pixelOffset: new Cesium.Cartesian2(0, -36),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
       },
     });
 
@@ -365,14 +446,13 @@ async function buildEntitiesFromCSV() {
     added++;
   }
 
-  console.log(`Loaded ${added} points from ${CSV_URL}`);
+  console.log(`Loaded ${added} customer points from ${CSV_URL}`);
 
+  // Zoom once so you can immediately see points (helpful for debugging)
   if (entities.length > 0) {
     viewer.zoomTo(viewer.entities);
   }
 }
-
-
 
 
 // =============================================================
