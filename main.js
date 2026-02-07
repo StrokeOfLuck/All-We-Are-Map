@@ -250,10 +250,42 @@ async function runTour() {
 
 // =============================================================
 // CSV LOADING (Latitude / Longitude already computed in Sheets)
+// Works for BOTH comma-CSV and tab-TSV exports.
 // One row = one customer bubble
 // =============================================================
+
+// More forgiving number parser (handles weird spaces, thousands commas)
+function toNum(x) {
+  if (x == null) return null;
+  const s = String(x)
+    .replace(/\u00A0/g, " ") // non-breaking spaces
+    .trim()
+    .replace(/,/g, ""); // remove thousands commas if any
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Auto-detect delimiter: TSV (tabs) vs CSV (commas)
+// - If TSV, split by tabs per line
+// - If CSV, fall back to your existing parseCSV(text) for quoted CSV support
+function parseCSVAuto(text) {
+  const firstLine = (text.split(/\r?\n/)[0] || "");
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const tabCount = (firstLine.match(/\t/g) || []).length;
+
+  if (tabCount > commaCount) {
+    return text
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length)
+      .map((line) => line.split("\t"));
+  }
+
+  return parseCSV(text);
+}
+
 async function buildEntitiesFromCSV() {
-  const CSV_URL = encodeURI("Impact_Map_Export - Sheet1.csv");
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(CSV_URL);
   if (!res.ok) {
@@ -262,7 +294,7 @@ async function buildEntitiesFromCSV() {
   }
 
   const text = await res.text();
-  const rows = parseCSV(text);
+  const rows = parseCSVAuto(text);
 
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
@@ -273,15 +305,27 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idx = (name) => headers.indexOf(name.toLowerCase());
+  const idx = (name) => headers.indexOf(String(name).toLowerCase());
 
-  const idxCustomerId   = idx("customer id");
+  // NOTE: your export contains repeated blocks of Customer/System columns.
+  // We only need the first Customer ID + Customer Name, plus Latitude/Longitude.
+  const idxCustomerId = idx("customer id");
   const idxCustomerName = idx("customer name");
-  const idxLat          = idx("latitude");
-  const idxLon          = idx("longitude");
+  const idxLat = idx("latitude");
+  const idxLon = idx("longitude");
+
+  console.log("CSV header index check:", {
+    idxCustomerId,
+    idxCustomerName,
+    idxLat,
+    idxLon,
+  });
 
   if (idxLat === -1 || idxLon === -1) {
-    console.error('CSV missing required columns: "Latitude" and/or "Longitude"');
+    console.error(
+      'CSV missing required columns: "Latitude" and/or "Longitude". Headers found:',
+      headers
+    );
     return;
   }
 
@@ -290,6 +334,8 @@ async function buildEntitiesFromCSV() {
 
     const lat = toNum(r[idxLat]);
     const lon = toNum(r[idxLon]);
+
+    // Skip rows without usable coordinates
     if (lat == null || lon == null) continue;
 
     const customerId =
@@ -304,7 +350,7 @@ async function buildEntitiesFromCSV() {
 
     const entity = viewer.entities.add({
       name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat),
+      position: Cesium.Cartesian3.fromDegrees(lon, lat), // (lon, lat)
 
       point: {
         pixelSize: 4,
@@ -343,7 +389,15 @@ async function buildEntitiesFromCSV() {
   }
 
   console.log(`Loaded ${entities.length} customers from ${CSV_URL}`);
+
+  // Optional: if points loaded, zoom to them once
+  if (entities.length > 0) {
+    viewer.zoomTo(viewer.entities);
+  }
 }
+
+
+
 
 // =============================================================
 // CHROME HARD-UNLOCK (DOM capture phase)
