@@ -249,11 +249,8 @@ async function runTour() {
 }
 
 // =============================================================
-// CSV LOADING (no dependencies)
-// CSV format:
-// - "Coordinates" is "LAT, LON" (backwards for Cesium)
-// - Cesium needs fromDegrees(LON, LAT)
-// Dedupe: keep latest Year per Customer ID with valid coordinates
+// CSV LOADING (Latitude / Longitude already computed in Sheets)
+// One row = one customer bubble
 // =============================================================
 async function buildEntitiesFromCSV() {
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
@@ -276,11 +273,10 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idx = (name) => headers.indexOf(String(name).toLowerCase());
+  const idx = (name) => headers.indexOf(name.toLowerCase());
 
-  // Your file has repeated "Customer ID" blocks, but Latitude/Longitude are unique.
-  const idxCustomerId   = idx("customer id");     // first occurrence is fine
-  const idxCustomerName = idx("customer name");   // should be unique
+  const idxCustomerId   = idx("customer id");
+  const idxCustomerName = idx("customer name");
   const idxLat          = idx("latitude");
   const idxLon          = idx("longitude");
 
@@ -308,7 +304,7 @@ async function buildEntitiesFromCSV() {
 
     const entity = viewer.entities.add({
       name,
-      position: Cesium.Cartesian3.fromDegrees(lon, lat), // Cesium wants (lon, lat)
+      position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
       point: {
         pixelSize: 4,
