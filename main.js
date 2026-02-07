@@ -270,7 +270,7 @@ function toNum(x) {
 // - If TSV, split by tabs per line
 // - If CSV, fall back to your existing parseCSV(text) for quoted CSV support
 async function buildEntitiesFromCSV() {
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
+  const CSV_URL = "Impact_Map_Export.csv";
 
   // ✅ IMPORTANT: encode spaces for GitHub Pages
   const res = await fetch(encodeURI(CSV_URL));
