@@ -1,21 +1,13 @@
 // =============================================================
-// FULL WORKING SCRIPT (no clustering yet)
-// - Loads CSV
-// - Keeps ONLY rows where: "Is this row the latest year for that customer?" == TRUE
-// - Uses "Population (Latest Year Only)" to:
-//    - size the circle point
-//    - show the population number as the label
-// - Keeps your tour + sidebar + shortcuts
+// FULL WORKING SCRIPT (two-table CSV, robust join)
+// - Site table: A (Customer ID), B (Customer Name), Coordinates column header
+// - Population table: AB (Customer ID), AI (Latest? TRUE), AJ (Population)
+// - Tables are NOT aligned by row index, so we build a pop map first, then join.
+// - Label shows: Customer Name (top) + Population (under)
 // =============================================================
 
-// -------------------------------
-// Cesium: no ion tokens needed
-// -------------------------------
 Cesium.Ion.defaultAccessToken = "";
 
-// -------------------------------
-// Viewer (NO default imagery)
-// -------------------------------
 const viewer = new Cesium.Viewer("cesiumContainer", {
   animation: false,
   timeline: false,
@@ -26,17 +18,12 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   terrainProvider: new Cesium.EllipsoidTerrainProvider(),
 });
 
-// Sharp labels/billboards on high-DPI screens
 viewer.resolutionScale = window.devicePixelRatio;
 
-// Canvas reference + keyboard focus
 const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
 canvas.focus();
 
-// -------------------------------
-// Basemap (pick ONE)
-// -------------------------------
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -45,41 +32,37 @@ viewer.imageryLayers.addImageryProvider(
 );
 
 // =============================================================
-// KNOBS YOU CARE ABOUT
+// KNOBS
 // =============================================================
-
-// Camera distances
 const overviewRangeMeters = 1300000;
 const siteRangeMeters = 1200;
 
-// Travel behavior
 const travelSeconds = 1.5;
 const zoomInSeconds = 2.0;
 const tiltSeconds = 1.6;
 
-// Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;
 const orbitSpeedDegPerSec = 8;
 const holdSeconds = 3;
 
-// Flat travel orientation
 const flatHeadingDeg = 0;
 const flatPitchDeg = -90;
 
-// Auto tour
 let autoAdvance = true;
 
 // =============================================================
-// DATA + STATE
+// STATE
 // =============================================================
 const entities = [];
-const siteItems = []; // { name, customerId, lat, lon, population, entity }
+const siteItems = [];
 
 let activeIndex = 0;
 let orbit = false;
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
+
+let tourRunId = 0;
 
 // =============================================================
 // HELPERS
@@ -97,9 +80,6 @@ function setActiveIndexFromEntity(entity) {
   if (idx !== -1) activeIndex = idx;
 }
 
-// Prevent multiple tour loops from stacking
-let tourRunId = 0;
-
 function updateTourButton() {
   const btn = document.getElementById("fcTourBtn");
   if (!btn) return;
@@ -107,12 +87,9 @@ function updateTourButton() {
   btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
 }
 
-// HARD unlock (breaks Cesium lookAt lock)
 function hardUnlockCamera() {
   autoAdvance = false;
   orbit = false;
-
-  // invalidate any running tour loop
   tourRunId++;
 
   try {
@@ -121,11 +98,9 @@ function hardUnlockCamera() {
 
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
-
   updateTourButton();
 }
 
-// Wrap flyToBoundingSphere in a Promise
 function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   const target = getActiveSitePosition();
   const offset = new Cesium.HeadingPitchRange(
@@ -154,7 +129,6 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   });
 }
 
-// Travel flat above site
 async function goAboveSiteFlat() {
   orbit = false;
   headingDeg = 0;
@@ -166,7 +140,6 @@ async function goAboveSiteFlat() {
   });
 }
 
-// Zoom down flat
 async function zoomDownFlat() {
   orbit = false;
   headingDeg = 0;
@@ -178,7 +151,6 @@ async function zoomDownFlat() {
   });
 }
 
-// Tilt into orbit pitch (no rotation yet)
 async function tiltIntoOrbitPitch() {
   orbit = false;
   headingDeg = 0;
@@ -190,7 +162,6 @@ async function tiltIntoOrbitPitch() {
   });
 }
 
-// Tilt back flat
 async function tiltBackToFlat() {
   orbit = false;
   headingDeg = 0;
@@ -202,9 +173,6 @@ async function tiltBackToFlat() {
   });
 }
 
-// =============================================================
-// ORBIT LOOP (ONLY when orbit === true)
-// =============================================================
 viewer.clock.onTick.addEventListener(() => {
   if (!orbit) return;
   if (isFlying) return;
@@ -225,9 +193,6 @@ viewer.clock.onTick.addEventListener(() => {
   );
 });
 
-// =============================================================
-// TOUR LOOP (guarded)
-// =============================================================
 async function runTourGuarded() {
   const myId = ++tourRunId;
 
@@ -266,17 +231,12 @@ function toggleAutoTour() {
     orbit = false;
     tourRunId++;
   }
-
   updateTourButton();
 }
 
 // =============================================================
-// CSV LOADING (simple + reliable)
-// Only plot rows where latest-year flag is TRUE
-// Point size + label = Population (Latest Year Only)
+// CSV PARSE + UTILS
 // =============================================================
-
-// ---------- CSV parser ----------
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -362,8 +322,22 @@ function popToPixelSize(pop) {
   return clamp(size, 6, 34);
 }
 
+// IMPORTANT: normalize IDs consistently between A and AB
+function normalizeId(v) {
+  if (v == null) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  // if looks numeric (including "123.0") => turn into integer string
+  const n = toNum(s);
+  if (n != null) return String(Math.trunc(n));
+  return s;
+}
+
+// =============================================================
+// BUILD ENTITIES (two-pass join)
+// =============================================================
 async function buildEntitiesFromCSV() {
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv"; // must match your repo file exactly
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
@@ -383,67 +357,94 @@ async function buildEntitiesFromCSV() {
   );
 
   const idxCoordinates = headers.indexOf("coordinates");
-  const idxLatestFlag = headers.indexOf("is this row the latest year for that customer?");
-  const idxPopLatest = headers.indexOf("population (latest year only)");
-
-  const idxCustomerId = headers.indexOf("customer id");
-  const idxCustomerName = headers.indexOf("customer name");
-
   if (idxCoordinates === -1) {
-    console.error('CSV missing required column: "Coordinates"');
-    console.log("Headers found:", headers);
-    return;
-  }
-  if (idxLatestFlag === -1) {
-    console.error('CSV missing required column: "Is this row the latest year for that customer?"');
-    console.log("Headers found:", headers);
-    return;
-  }
-  if (idxPopLatest === -1) {
-    console.error('CSV missing required column: "Population (Latest Year Only)"');
+    console.error('CSV missing required column header: "Coordinates"');
     console.log("Headers found:", headers);
     return;
   }
 
-  // Clear old stuff
+  // Fixed column positions (0-based)
+  const IDX_A = 0;   // A: Customer ID (site)
+  const IDX_B = 1;   // B: Customer Name (site)
+  const IDX_AB = 27; // AB: Customer ID (population section)
+  const IDX_AI = 34; // AI: Latest-year flag
+  const IDX_AJ = 35; // AJ: Population number
+
+  // Reset
   viewer.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
-  let kept = 0;
+  // PASS 1: population map from AB/AI/AJ across ALL rows (even far down)
+  const popById = new Map();
+
+  let popCandidates = 0;
+  let popKept = 0;
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
-    const isLatest = parseBool(r[idxLatestFlag]);
+    const popId = normalizeId(r[IDX_AB]);
+    if (!popId) continue;
+
+    popCandidates++;
+
+    const isLatest = parseBool(r[IDX_AI]);
     if (!isLatest) continue;
 
-    const pop = toNum(r[idxPopLatest]) ?? 0;
-    if (pop <= 0) continue;
+    const pop = toNum(r[IDX_AJ]);
+    if (pop == null) continue;
+
+    const prev = popById.get(popId);
+    // if multiple TRUE rows exist, keep the largest pop (safer)
+    if (prev == null || pop > prev) {
+      popById.set(popId, pop);
+    }
+  }
+
+  popKept = popById.size;
+
+  console.log("Population rows seen (AB non-empty):", popCandidates);
+  console.log("Population IDs kept (AI==TRUE):", popKept);
+
+  // PASS 2: site rows from A/B + Coordinates, then join population by ID
+  let sitesSeen = 0;
+  let plotted = 0;
+  let missingPop = 0;
+  let missingCoords = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+
+    const siteId = normalizeId(r[IDX_A]);
+    const name = String(r[IDX_B] ?? "").trim();
+
+    // treat as "site row" only if it has both A and B
+    if (!siteId || !name) continue;
+    sitesSeen++;
 
     const coord = parseCoordinatesLatLon(r[idxCoordinates]);
-    if (!coord) continue;
+    if (!coord) {
+      missingCoords++;
+      continue;
+    }
 
-    const customerId =
-      idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
-        ? String(r[idxCustomerId]).trim()
-        : `row-${i}`;
-
-    const name =
-      idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
-        ? String(r[idxCustomerName]).trim()
-        : `Site ${customerId}`;
+    const pop = popById.get(siteId);
+    if (pop == null) {
+      missingPop++;
+      continue; // only plot when we have latest-year population
+    }
+    if (pop <= 0) continue;
 
     const { lat, lon } = coord;
 
     const entity = viewer.entities.add({
-      name: name,
+      name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
       properties: {
         population: pop,
-        customerId: customerId,
-        isLatestYear: true,
+        customerId: siteId,
       },
 
       point: {
@@ -454,7 +455,6 @@ async function buildEntitiesFromCSV() {
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
 
-      // If you suspect icon path problems, comment this billboard block out.
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -465,25 +465,28 @@ async function buildEntitiesFromCSV() {
       },
 
       label: {
-        text: fmtInt(pop),
+        text: `${name}\n${fmtInt(pop)}`,
         font: "bold 18px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 5,
         showBackground: true,
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        pixelOffset: new Cesium.Cartesian2(0, -34),
+        pixelOffset: new Cesium.Cartesian2(0, -44),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
       },
     });
 
     entities.push(entity);
-    siteItems.push({ name, customerId, lat, lon, population: pop, entity });
-    kept++;
+    siteItems.push({ name, customerId: siteId, lat, lon, population: pop, entity });
+    plotted++;
   }
 
-  console.log(`Loaded ${kept} latest-year sites with population from ${CSV_URL}`);
+  console.log("Site rows seen (A+B present):", sitesSeen);
+  console.log("Plotted sites:", plotted);
+  console.log("Skipped (missing coords):", missingCoords);
+  console.log("Skipped (missing pop match A->AB latest):", missingPop);
 }
 
 // =============================================================
@@ -500,7 +503,6 @@ function flyToSite(entity) {
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
-
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.2,
     offset: new Cesium.HeadingPitchRange(
@@ -552,7 +554,7 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// CHROME-SAFE DOUBLE CLICK
+// DOUBLE CLICK + HARD UNLOCK
 // =============================================================
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
@@ -575,9 +577,6 @@ safeClickHandler.setInputAction((movement) => {
   flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-// =============================================================
-// HARD UNLOCK ON USER INPUT
-// =============================================================
 canvas.addEventListener(
   "pointerdown",
   (e) => {
@@ -636,7 +635,6 @@ window.addEventListener(
     if (k === "r") {
       autoAdvance = false;
       orbit = false;
-
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
       await zoomDownFlat();
@@ -687,7 +685,7 @@ window.addEventListener(
 );
 
 // =============================================================
-// Floating controls: menu + tour toggle
+// Floating controls
 // =============================================================
 (function wireFloatingControls() {
   const sidebar = document.getElementById("sidebar");
@@ -761,14 +759,12 @@ window.addEventListener(
   renderSiteList();
 
   if (entities.length === 0) {
-    console.warn("No latest-year sites loaded; nothing to show.");
+    console.warn("No sites loaded; nothing to show.");
     return;
   }
 
-  // Ensure you SEE the points immediately
   viewer.zoomTo(viewer.entities);
 
-  // Start tour
   autoAdvance = true;
   runTourGuarded();
 })();
