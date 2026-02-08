@@ -452,7 +452,7 @@ async function buildEntitiesFromCSV() {
     const { lat, lon } = coord;
 
     // ✅ Name above population (two-line label)
-    const labelText = pop != null ? `${name}\n${fmtInt(pop)}` : `${name}`;
+   const labelText = pop != null ? `${name}\nPopulation served: ${fmtInt(pop)}` : `${name}`;
 
     const entity = viewer.entities.add({
       name,
