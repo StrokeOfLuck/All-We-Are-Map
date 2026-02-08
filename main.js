@@ -409,7 +409,7 @@ async function buildEntitiesFromCSV() {
   for (const [customerId, item] of bestByCustomer.entries()) {
     const { lat, lon } = item.coord;
 
-    const entity = viewer.entities.add({
+    const entity = popSource.entities.add({
       name: item.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
@@ -582,28 +582,7 @@ function setupPopulationClustering() {
   viewer.dataSources.add(popSource);
 }
 
-function moveEntitiesIntoPopulationSource() {
-  for (const e of entities) {
-    viewer.entities.remove(e);
-    popSource.entities.add(e);
-  }
-}
 
- 
-/**
- * Move your points from viewer.entities into popSource.entities
- * so clustering can manage them.
- *
- * Call this AFTER buildEntitiesFromCSV() finishes creating entities[].
- */
-function moveEntitiesIntoPopulationSource() {
-  // Remove from viewer.entities, add to popSource
-  for (const e of entities) {
-    // Keep your original entity object; just relocate it
-    viewer.entities.remove(e);
-    popSource.entities.add(e);
-  }
-}
 
 
 // =============================================================
@@ -946,19 +925,14 @@ function updateTourButton() {
 // START
 // =============================================================
 (async function init() {
-  setupPopulationClustering();          // ✅ turn clustering on
-  await buildEntitiesFromCSV();         // ✅ load/create entities[]
-  moveEntitiesIntoPopulationSource();   // ✅ put entities into popSource so clustering can see them
+  setupPopulationClustering();  // enable clustering
+  await buildEntitiesFromCSV(); // create points directly in popSource
 
   console.log("entities:", entities.length, "popSource:", popSource.entities.values.length);
 
   wireSearchBox();
   renderSiteList();
 
-  if (entities.length === 0) {
-    console.warn("No sites loaded from sites.csv; tour not started.");
-    return;
-  }
-
+  if (entities.length === 0) return;
   runTourGuarded();
 })();
