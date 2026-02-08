@@ -591,36 +591,7 @@ function setupPopulationClustering() {
 }
 
 
-  
-  // Cache bubble image once
-  if (!_bubbleImg) _bubbleImg = makeBubbleImage(96);
-
-  // Bubble billboard
-  cluster.billboard.show = true;
-  cluster.billboard.image = _bubbleImg;
-  cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-  cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-  // Scale bubble a bit by population
-  const s = Cesium.Math.clamp(1.0 + Math.log10(Math.max(totalPop, 10)) * 0.18, 1.0, 2.2);
-  cluster.billboard.width = 34 * s;
-  cluster.billboard.height = 34 * s;
-
-  // Number label (no black rectangle background)
-  cluster.label.show = true;
-  cluster.label.text = fmtInt(totalPop);
-  cluster.label.font = "bold 18px sans-serif";
-  cluster.label.fillColor = Cesium.Color.WHITE;
-  cluster.label.outlineColor = Cesium.Color.BLACK;
-  cluster.label.outlineWidth = 6;
-  cluster.label.showBackground = false; // ✅ removes the black boxes you’re seeing
-  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-});
-
-  // 3) add data source to viewer
-  viewer.dataSources.add(popSource);
-}
-
+ 
 /**
  * Move your points from viewer.entities into popSource.entities
  * so clustering can manage them.
