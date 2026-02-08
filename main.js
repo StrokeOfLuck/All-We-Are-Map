@@ -23,6 +23,18 @@ const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
 canvas.focus();
 
+
+/*
+// FREE backup basemap (no tokens)
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
+
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
