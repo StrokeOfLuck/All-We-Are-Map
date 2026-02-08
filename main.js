@@ -497,6 +497,25 @@ function fmtInt(n) {
   return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+function makeBubbleImage(size = 64) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+
+  const r = size / 2;
+
+  // outer ring
+  ctx.beginPath();
+  ctx.arc(r, r, r - 2, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.stroke();
+
+  return c.toDataURL("image/png");
+}
+
 function setupPopulationClustering() {
   // 1) enable clustering
   popSource.clustering.enabled = true;
@@ -517,8 +536,11 @@ function setupPopulationClustering() {
 
     // Hide default pin + show a "bubble"
     cluster.billboard.show = true;
-    cluster.billboard.image = undefined; // keep Cesium's default cluster icon unless you set your own
+    cluster.billboard.image = makeBubbleImage(72);  // ✅ bubble graphic
     cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+    cluster.billboard.width = 36;
+    cluster.billboard.height = 36;
+    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
     // Label with summed population
     cluster.label.show = totalPop > SHOW_POP_LABEL_OVER;
