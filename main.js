@@ -1,3 +1,13 @@
+// =============================================================
+// FULL WORKING SCRIPT (no clustering yet)
+// - Loads CSV
+// - Keeps ONLY rows where: "Is this row the latest year for that customer?" == TRUE
+// - Uses "Population (Latest Year Only)" to:
+//    - size the circle point
+//    - show the population number as the label
+// - Keeps your tour + sidebar + shortcuts
+// =============================================================
+
 // -------------------------------
 // Cesium: no ion tokens needed
 // -------------------------------
@@ -16,7 +26,7 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   terrainProvider: new Cesium.EllipsoidTerrainProvider(),
 });
 
-// sharp labels/billboards on high-DPI
+// Sharp labels/billboards on high-DPI screens
 viewer.resolutionScale = window.devicePixelRatio;
 
 // Canvas reference + keyboard focus
@@ -35,29 +45,35 @@ viewer.imageryLayers.addImageryProvider(
 );
 
 // =============================================================
-// KNOBS
+// KNOBS YOU CARE ABOUT
 // =============================================================
+
+// Camera distances
 const overviewRangeMeters = 1300000;
 const siteRangeMeters = 1200;
 
+// Travel behavior
 const travelSeconds = 1.5;
 const zoomInSeconds = 2.0;
 const tiltSeconds = 1.6;
 
+// Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;
 const orbitSpeedDegPerSec = 8;
 const holdSeconds = 3;
 
+// Flat travel orientation
 const flatHeadingDeg = 0;
 const flatPitchDeg = -90;
 
+// Auto tour
 let autoAdvance = true;
 
 // =============================================================
 // DATA + STATE
 // =============================================================
-const entities = []; // entities we tour through (these live in popSource)
-const siteItems = []; // sidebar list
+const entities = [];
+const siteItems = []; // { name, customerId, lat, lon, population, entity }
 
 let activeIndex = 0;
 let orbit = false;
@@ -81,9 +97,22 @@ function setActiveIndexFromEntity(entity) {
   if (idx !== -1) activeIndex = idx;
 }
 
+// Prevent multiple tour loops from stacking
+let tourRunId = 0;
+
+function updateTourButton() {
+  const btn = document.getElementById("fcTourBtn");
+  if (!btn) return;
+  btn.textContent = autoAdvance ? "❚❚" : "▶";
+  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
+}
+
+// HARD unlock (breaks Cesium lookAt lock)
 function hardUnlockCamera() {
   autoAdvance = false;
   orbit = false;
+
+  // invalidate any running tour loop
   tourRunId++;
 
   try {
@@ -92,6 +121,7 @@ function hardUnlockCamera() {
 
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
+
   updateTourButton();
 }
 
@@ -124,6 +154,7 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   });
 }
 
+// Travel flat above site
 async function goAboveSiteFlat() {
   orbit = false;
   headingDeg = 0;
@@ -135,6 +166,7 @@ async function goAboveSiteFlat() {
   });
 }
 
+// Zoom down flat
 async function zoomDownFlat() {
   orbit = false;
   headingDeg = 0;
@@ -146,6 +178,7 @@ async function zoomDownFlat() {
   });
 }
 
+// Tilt into orbit pitch (no rotation yet)
 async function tiltIntoOrbitPitch() {
   orbit = false;
   headingDeg = 0;
@@ -157,6 +190,7 @@ async function tiltIntoOrbitPitch() {
   });
 }
 
+// Tilt back flat
 async function tiltBackToFlat() {
   orbit = false;
   headingDeg = 0;
@@ -169,7 +203,7 @@ async function tiltBackToFlat() {
 }
 
 // =============================================================
-// ORBIT LOOP (ONLY while orbit === true)
+// ORBIT LOOP (ONLY when orbit === true)
 // =============================================================
 viewer.clock.onTick.addEventListener(() => {
   if (!orbit) return;
@@ -192,10 +226,8 @@ viewer.clock.onTick.addEventListener(() => {
 });
 
 // =============================================================
-// TOUR (guarded so it can't stack)
+// TOUR LOOP (guarded)
 // =============================================================
-let tourRunId = 0;
-
 async function runTourGuarded() {
   const myId = ++tourRunId;
 
@@ -225,9 +257,26 @@ async function runTourGuarded() {
   }
 }
 
+function toggleAutoTour() {
+  autoAdvance = !autoAdvance;
+
+  if (autoAdvance) {
+    if (entities.length > 0) runTourGuarded();
+  } else {
+    orbit = false;
+    tourRunId++;
+  }
+
+  updateTourButton();
+}
+
 // =============================================================
-// CSV PARSE
+// CSV LOADING (simple + reliable)
+// Only plot rows where latest-year flag is TRUE
+// Point size + label = Population (Latest Year Only)
 // =============================================================
+
+// ---------- CSV parser ----------
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -243,18 +292,15 @@ function parseCSV(text) {
       i++;
       continue;
     }
-
     if (ch === '"') {
       inQuotes = !inQuotes;
       continue;
     }
-
     if (ch === "," && !inQuotes) {
       row.push(cur);
       cur = "";
       continue;
     }
-
     if ((ch === "\n" || ch === "\r") && !inQuotes) {
       if (ch === "\r" && next === "\n") i++;
       row.push(cur);
@@ -263,7 +309,6 @@ function parseCSV(text) {
       row = [];
       continue;
     }
-
     cur += ch;
   }
 
@@ -274,16 +319,15 @@ function parseCSV(text) {
 
 function toNum(x) {
   if (x == null) return null;
-  const s = String(x).replace(/\u00A0/g, " ").trim();
+  const s = String(x).replace(/\u00A0/g, " ").trim().replace(/,/g, "");
   if (!s) return null;
-  const cleaned = s.replace(/,/g, "");
-  const n = Number(cleaned);
+  const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
-function toBool(x) {
-  const s = String(x ?? "").trim().toUpperCase();
-  return s === "TRUE" || s === "YES" || s === "1";
+function parseBool(x) {
+  const s = String(x ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y";
 }
 
 function parseCoordinatesLatLon(coordStr) {
@@ -308,104 +352,19 @@ function fmtInt(n) {
   return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-// =============================================================
-// POPULATION SOURCE + CLUSTERING
-// =============================================================
-const popSource = new Cesium.CustomDataSource("populationSites");
-viewer.dataSources.add(popSource); // <-- REQUIRED or nothing renders
-
-const CLUSTER_PIXEL_RANGE = 55;
-const CLUSTER_MIN_SIZE = 2;
-
-let _bubbleImg = null;
-let _lastResetFrame = -1;
-
-function makeBubbleImage(size = 96) {
-  const c = document.createElement("canvas");
-  c.width = c.height = size;
-  const ctx = c.getContext("2d");
-  const r = size / 2;
-
-  ctx.shadowColor = "rgba(0,0,0,0.35)";
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetY = 2;
-
-  ctx.beginPath();
-  ctx.arc(r, r, r - 6, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-  ctx.fill();
-
-  ctx.shadowBlur = 0;
-  ctx.lineWidth = 5;
-  ctx.strokeStyle = "rgba(255,255,255,0.9)";
-  ctx.stroke();
-
-  return c.toDataURL("image/png");
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
 }
 
-function setupPopulationClustering() {
-  popSource.clustering.enabled = true;
-  popSource.clustering.pixelRange = CLUSTER_PIXEL_RANGE;
-  popSource.clustering.minimumClusterSize = CLUSTER_MIN_SIZE;
-
-  popSource.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
-    // Reset visibility once per frame (so unclustered points come back)
-    const frame = viewer.scene.frameState.frameNumber;
-    if (frame !== _lastResetFrame) {
-      _lastResetFrame = frame;
-      for (const e of popSource.entities.values) {
-        if (e.billboard) e.billboard.show = true;
-        if (e.label) e.label.show = true;
-        if (e.point) e.point.show = true;
-      }
-    }
-
-    // Sum population
-    let totalPop = 0;
-    for (const e of clusteredEntities) {
-      const p = e.properties?.population
-        ? e.properties.population.getValue()
-        : 0;
-      totalPop += Number(p) || 0;
-
-      // Hide originals so they don't "fight" the cluster
-      if (e.billboard) e.billboard.show = false;
-      if (e.label) e.label.show = false;
-      if (e.point) e.point.show = false;
-    }
-
-    if (!_bubbleImg) _bubbleImg = makeBubbleImage(96);
-
-    cluster.billboard.show = true;
-    cluster.billboard.image = _bubbleImg;
-    cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-    const s = Cesium.Math.clamp(
-      1.0 + Math.log10(Math.max(totalPop, 10)) * 0.18,
-      1.0,
-      2.2
-    );
-    cluster.billboard.width = 34 * s;
-    cluster.billboard.height = 34 * s;
-
-    // cluster label just population total
-    cluster.label.show = true;
-    cluster.label.text = fmtInt(totalPop);
-    cluster.label.font = "bold 18px sans-serif";
-    cluster.label.fillColor = Cesium.Color.WHITE;
-    cluster.label.outlineColor = Cesium.Color.BLACK;
-    cluster.label.outlineWidth = 6;
-    cluster.label.showBackground = false;
-    cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-  });
+function popToPixelSize(pop) {
+  const p = Math.max(0, Number(pop) || 0);
+  const size = 6 + Math.log10(Math.max(p, 1)) * 6;
+  return clamp(size, 6, 34);
 }
 
-// =============================================================
-// BUILD POINTS (latest-year pop row + coords from any row)
-// =============================================================
 async function buildEntitiesFromCSV() {
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv"; // must match your repo file exactly
+
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
     console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
@@ -423,100 +382,79 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idxCustomerId = headers.indexOf("customer id");
-  const idxCustomerName = headers.indexOf("customer name");
   const idxCoordinates = headers.indexOf("coordinates");
-
-  // your two important columns
   const idxLatestFlag = headers.indexOf("is this row the latest year for that customer?");
   const idxPopLatest = headers.indexOf("population (latest year only)");
-  const idxPop = headers.indexOf("population");
 
-  if (idxCustomerId === -1 || idxCustomerName === -1 || idxCoordinates === -1) {
-    console.error("CSV missing required columns. Found headers:", headers);
+  const idxCustomerId = headers.indexOf("customer id");
+  const idxCustomerName = headers.indexOf("customer name");
+
+  if (idxCoordinates === -1) {
+    console.error('CSV missing required column: "Coordinates"');
+    console.log("Headers found:", headers);
     return;
   }
   if (idxLatestFlag === -1) {
-    console.error('CSV missing: "Is this row the latest year for that customer?"');
+    console.error('CSV missing required column: "Is this row the latest year for that customer?"');
+    console.log("Headers found:", headers);
+    return;
+  }
+  if (idxPopLatest === -1) {
+    console.error('CSV missing required column: "Population (Latest Year Only)"');
+    console.log("Headers found:", headers);
     return;
   }
 
-  // Pass 1: collect best coords per Customer ID (from ANY row that has coords)
-  const coordsById = new Map(); // id -> {lat, lon}
-  const nameById = new Map();   // id -> name (latest non-empty)
+  // Clear old stuff
+  viewer.entities.removeAll();
+  entities.length = 0;
+  siteItems.length = 0;
+
+  let kept = 0;
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
-    const rawId = r[idxCustomerId];
-    const idNum = toNum(rawId);
-    const id = (idNum != null ? String(idNum) : String(rawId || "").trim());
-    if (!id) continue;
 
-    const nm = String(r[idxCustomerName] || "").trim();
-    if (nm) nameById.set(id, nm);
-
-    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
-    if (coord && !coordsById.has(id)) {
-      coordsById.set(id, coord);
-    }
-  }
-
-  // Pass 2: latest-year rows define population (MUST be on latest-year row)
-  const latestRowById = new Map(); // id -> { population, name }
-  let missingCoordsForLatest = 0;
-
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    const rawId = r[idxCustomerId];
-    const idNum = toNum(rawId);
-    const id = (idNum != null ? String(idNum) : String(rawId || "").trim());
-    if (!id) continue;
-
-    const isLatest = toBool(r[idxLatestFlag]);
+    const isLatest = parseBool(r[idxLatestFlag]);
     if (!isLatest) continue;
 
-    const name = String(r[idxCustomerName] || nameById.get(id) || `Customer ${id}`).trim();
+    const pop = toNum(r[idxPopLatest]) ?? 0;
+    if (pop <= 0) continue;
 
-    // population from "Population (Latest Year Only)" if present else "Population"
-    const popA = idxPopLatest !== -1 ? toNum(r[idxPopLatest]) : null;
-    const popB = idxPop !== -1 ? toNum(r[idxPop]) : null;
-    const population = (popA != null ? popA : (popB != null ? popB : 0));
-
-    latestRowById.set(id, { name, population });
-
-    if (!coordsById.has(id)) missingCoordsForLatest++;
-  }
-
-  // Build entities only for customers that have a latest-year row AND coords
-  for (const [id, latest] of latestRowById.entries()) {
-    const coord = coordsById.get(id);
+    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
     if (!coord) continue;
 
+    const customerId =
+      idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
+        ? String(r[idxCustomerId]).trim()
+        : `row-${i}`;
+
+    const name =
+      idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
+        ? String(r[idxCustomerName]).trim()
+        : `Site ${customerId}`;
+
     const { lat, lon } = coord;
-    const pop = latest.population || 0;
 
-    // Scale point by population (log scale so big schools don't crush small ones)
-    const size = Cesium.Math.clamp(8 + Math.log10(Math.max(pop, 1)) * 6, 8, 28);
-
-    const labelText = `${latest.name}\n${fmtInt(pop)}`;
-
-    const entity = popSource.entities.add({
-      name: latest.name,
+    const entity = viewer.entities.add({
+      name: name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
+
       properties: {
-        customerId: id,
         population: pop,
+        customerId: customerId,
+        isLatestYear: true,
       },
 
       point: {
-        pixelSize: size,
+        pixelSize: popToPixelSize(pop),
         color: Cesium.Color.YELLOW,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
+      // If you suspect icon path problems, comment this billboard block out.
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -527,36 +465,25 @@ async function buildEntitiesFromCSV() {
       },
 
       label: {
-        text: labelText, // name ABOVE number
+        text: fmtInt(pop),
         font: "bold 18px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 6,
+        outlineWidth: 5,
         showBackground: true,
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        pixelOffset: new Cesium.Cartesian2(0, -55),
+        pixelOffset: new Cesium.Cartesian2(0, -34),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-
-        // Show labels only when closer (keeps zoomed-out clean)
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 120_000),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
       },
     });
 
     entities.push(entity);
-    siteItems.push({
-      name: latest.name,
-      customerId: id,
-      lat,
-      lon,
-      population: pop,
-      entity,
-    });
+    siteItems.push({ name, customerId, lat, lon, population: pop, entity });
+    kept++;
   }
 
-  console.log(`Loaded ${entities.length} mapped customers with latest-year population.`);
-  if (missingCoordsForLatest > 0) {
-    console.warn(`Latest-year rows missing coords (fixed by borrowing coords when possible). Still missing coords for ${missingCoordsForLatest} customers.`);
-  }
+  console.log(`Loaded ${kept} latest-year sites with population from ${CSV_URL}`);
 }
 
 // =============================================================
@@ -569,6 +496,7 @@ function flyToSite(entity) {
   updateTourButton();
 
   setActiveIndexFromEntity(entity);
+
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
@@ -604,7 +532,8 @@ function renderSiteList(filterText = "") {
     row.className = "siteRow";
     row.innerHTML = `
       <div>${s.name}</div>
-      <div class="siteSub">ID: ${s.customerId} • Pop: ${fmtInt(s.population)}</div>
+      <div class="siteSub">ID: ${s.customerId}</div>
+      <div class="siteSub">Pop: ${fmtInt(s.population)}</div>
     `;
 
     row.addEventListener("click", (e) => {
@@ -623,15 +552,32 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// CLICK / UNLOCK HANDLERS
+// CHROME-SAFE DOUBLE CLICK
 // =============================================================
-
-// Disable Cesium default dblclick zoom
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
 
-// Chrome hard-unlock
+let lastClickAt = 0;
+const DOUBLE_CLICK_MS = 320;
+
+const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+safeClickHandler.setInputAction((movement) => {
+  const now = performance.now();
+  const isDouble = now - lastClickAt < DOUBLE_CLICK_MS;
+  lastClickAt = now;
+
+  if (!isDouble) return;
+
+  const picked = viewer.scene.pick(movement.position);
+  if (!picked || !picked.id || !picked.id.position) return;
+
+  flyToSite(picked.id);
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+// =============================================================
+// HARD UNLOCK ON USER INPUT
+// =============================================================
 canvas.addEventListener(
   "pointerdown",
   (e) => {
@@ -660,60 +606,169 @@ canvas.addEventListener(
 );
 
 // =============================================================
-// Floating controls (tour button)
+// KEYBOARD SHORTCUTS
 // =============================================================
-function toggleAutoTour() {
-  autoAdvance = !autoAdvance;
+window.addEventListener(
+  "keydown",
+  async (e) => {
+    const active = document.activeElement;
+    const isSearch = active && active.id === "siteSearch";
 
-  if (autoAdvance) {
-    if (entities.length > 0) runTourGuarded();
-  } else {
-    orbit = false;
-    tourRunId++;
+    const k = e.key.toLowerCase();
+    const isShortcut = k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
+
+    if (isSearch && !isShortcut) return;
+
+    if (isSearch && isShortcut) {
+      active.blur();
+      canvas.focus();
+    }
+
+    if (k === "h") {
+      const help = document.getElementById("controlsHelp");
+      if (help) help.classList.toggle("controlsHelpHidden");
+      e.preventDefault();
+      return;
+    }
+
+    if (entities.length === 0) return;
+
+    if (k === "r") {
+      autoAdvance = false;
+      orbit = false;
+
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      await zoomDownFlat();
+      await tiltIntoOrbitPitch();
+      headingDeg = 0;
+      orbit = true;
+
+      e.preventDefault();
+      return;
+    }
+
+    if (k === "n") {
+      autoAdvance = false;
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      activeIndex = (activeIndex + 1) % entities.length;
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+
+      e.preventDefault();
+      return;
+    }
+
+    if (k === "p") {
+      autoAdvance = false;
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      activeIndex = (activeIndex - 1 + entities.length) % entities.length;
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+
+      e.preventDefault();
+      return;
+    }
+
+    if (k === "t") {
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      toggleAutoTour();
+      e.preventDefault();
+      return;
+    }
+  },
+  true
+);
+
+// =============================================================
+// Floating controls: menu + tour toggle
+// =============================================================
+(function wireFloatingControls() {
+  const sidebar = document.getElementById("sidebar");
+  const menuBtn = document.getElementById("fcMenuBtn");
+  const tourBtn = document.getElementById("fcTourBtn");
+
+  if (!sidebar || !menuBtn || !tourBtn) return;
+
+  const mqMobile = window.matchMedia("(max-width: 768px)");
+
+  function isClosed() {
+    return sidebar.classList.contains("sidebarClosed");
   }
 
-  updateTourButton();
-}
+  function updateMenuButton() {
+    menuBtn.textContent = isClosed() ? "☰" : "✕";
+    menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
+  }
 
-function updateTourButton() {
-  const btn = document.getElementById("fcTourBtn");
-  if (!btn) return;
-  btn.textContent = autoAdvance ? "❚❚" : "▶";
-  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
-}
+  function applyInitialSidebarState() {
+    sidebar.classList.add("sidebarClosed");
+    updateMenuButton();
+  }
 
-(function wireFloatingControls() {
-  const tourBtn = document.getElementById("fcTourBtn");
-  if (!tourBtn) return;
+  function toggleMenu() {
+    sidebar.classList.toggle("sidebarClosed");
+    updateMenuButton();
+  }
+
+  menuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleMenu();
+  });
 
   tourBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleAutoTour();
   });
 
+  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
+
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
+  else window.addEventListener("resize", applyInitialSidebarState);
+
+  applyInitialSidebarState();
   updateTourButton();
+})();
+
+// =============================================================
+// Help box close button
+// =============================================================
+(function wireHelpCloseButton() {
+  const help = document.getElementById("controlsHelp");
+  const closeBtn = document.getElementById("helpCloseBtn");
+  if (!help || !closeBtn) return;
+
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    help.classList.add("controlsHelpHidden");
+  });
 })();
 
 // =============================================================
 // START
 // =============================================================
 (async function init() {
-  setupPopulationClustering();
   await buildEntitiesFromCSV();
-
-  console.log("entities:", entities.length, "popSource:", popSource.entities.values.length);
 
   wireSearchBox();
   renderSiteList();
 
   if (entities.length === 0) {
-    console.warn("No mapped customers found (latest-year row + coords).");
+    console.warn("No latest-year sites loaded; nothing to show.");
     return;
   }
 
-  // Start the camera somewhere sane immediately
-  activeIndex = 0;
-  await zoomDownFlat();
+  // Ensure you SEE the points immediately
+  viewer.zoomTo(viewer.entities);
 
+  // Start tour
+  autoAdvance = true;
   runTourGuarded();
 })();
