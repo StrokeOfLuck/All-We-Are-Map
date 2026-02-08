@@ -1,11 +1,13 @@
-// -------------------------------
-// Cesium: no ion tokens needed
-// -------------------------------
+// =============================================================
+// FULL WORKING SCRIPT (two-table CSV, robust join)
+// - Site table: A (Customer ID), B (Customer Name), Coordinates column header
+// - Population table: AB (Customer ID), AI (Latest? TRUE), AJ (Population)
+// - Tables are NOT aligned by row index, so we build a pop map first, then join.
+// - Label shows: Customer Name (top) + Population (under)
+// =============================================================
+
 Cesium.Ion.defaultAccessToken = "";
 
-// -------------------------------
-// Viewer (NO default imagery)
-// -------------------------------
 const viewer = new Cesium.Viewer("cesiumContainer", {
   animation: false,
   timeline: false,
@@ -16,28 +18,11 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   terrainProvider: new Cesium.EllipsoidTerrainProvider(),
 });
 
-// ✅ Sharp labels/billboards on high-DPI screens (must be AFTER viewer is created)
 viewer.resolutionScale = window.devicePixelRatio;
 
-// Canvas reference + keyboard focus
 const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
 canvas.focus();
-
-// -------------------------------
-// Basemap (pick ONE)
-// -------------------------------
-
-/*
-// FREE backup basemap (no tokens)
-viewer.imageryLayers.addImageryProvider(
-  new Cesium.UrlTemplateImageryProvider({
-    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-    subdomains: ["a", "b", "c"],
-    credit: "OpenTopoMap",
-  })
-);
-*/
 
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
@@ -47,41 +32,37 @@ viewer.imageryLayers.addImageryProvider(
 );
 
 // =============================================================
-// KNOBS YOU CARE ABOUT
+// KNOBS
 // =============================================================
+const overviewRangeMeters = 1300000;
+const siteRangeMeters = 1200;
 
-// Camera distances
-const overviewRangeMeters = 1300000; // how far OUT between sites
-const siteRangeMeters = 1200; // how close IN at the site
+const travelSeconds = 1.5;
+const zoomInSeconds = 2.0;
+const tiltSeconds = 1.6;
 
-// Travel behavior
-const travelSeconds = 1.5; // "move above next site" + "zoom out"
-const zoomInSeconds = 2.0; // zooming down flat
-const tiltSeconds = 1.6; // tilt into orbit pitch
-
-// Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;
 const orbitSpeedDegPerSec = 8;
 const holdSeconds = 3;
 
-// Flat travel orientation
 const flatHeadingDeg = 0;
 const flatPitchDeg = -90;
 
-// Auto tour
 let autoAdvance = true;
 
 // =============================================================
-// DATA + STATE
+// STATE
 // =============================================================
 const entities = [];
-const siteItems = []; // { name, customerId, lat, lon, entity }
+const siteItems = [];
 
 let activeIndex = 0;
 let orbit = false;
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
+
+let tourRunId = 0;
 
 // =============================================================
 // HELPERS
@@ -99,12 +80,16 @@ function setActiveIndexFromEntity(entity) {
   if (idx !== -1) activeIndex = idx;
 }
 
-// HARD unlock (breaks Cesium lookAt lock in Chrome)
+function updateTourButton() {
+  const btn = document.getElementById("fcTourBtn");
+  if (!btn) return;
+  btn.textContent = autoAdvance ? "❚❚" : "▶";
+  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
+}
+
 function hardUnlockCamera() {
   autoAdvance = false;
   orbit = false;
-
-  // invalidate any running tour loop
   tourRunId++;
 
   try {
@@ -113,12 +98,9 @@ function hardUnlockCamera() {
 
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
-
-  // ✅ keep UI in sync
   updateTourButton();
 }
 
-// Wrap flyToBoundingSphere in a Promise
 function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   const target = getActiveSitePosition();
   const offset = new Cesium.HeadingPitchRange(
@@ -147,7 +129,6 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   });
 }
 
-// Travel flat above site
 async function goAboveSiteFlat() {
   orbit = false;
   headingDeg = 0;
@@ -159,7 +140,6 @@ async function goAboveSiteFlat() {
   });
 }
 
-// Zoom down flat
 async function zoomDownFlat() {
   orbit = false;
   headingDeg = 0;
@@ -171,7 +151,6 @@ async function zoomDownFlat() {
   });
 }
 
-// Tilt into orbit pitch (no rotation yet)
 async function tiltIntoOrbitPitch() {
   orbit = false;
   headingDeg = 0;
@@ -183,7 +162,6 @@ async function tiltIntoOrbitPitch() {
   });
 }
 
-// Tilt back flat
 async function tiltBackToFlat() {
   orbit = false;
   headingDeg = 0;
@@ -195,9 +173,6 @@ async function tiltBackToFlat() {
   });
 }
 
-// =============================================================
-// ORBIT LOOP (ONLY when orbit === true)
-// =============================================================
 viewer.clock.onTick.addEventListener(() => {
   if (!orbit) return;
   if (isFlying) return;
@@ -208,7 +183,6 @@ viewer.clock.onTick.addEventListener(() => {
 
   headingDeg += orbitSpeedDegPerSec * dt;
 
-  // Orbit uses lookAt, which "locks" camera unless we hardUnlock on user input
   viewer.camera.lookAt(
     getActiveSitePosition(),
     new Cesium.HeadingPitchRange(
@@ -219,49 +193,50 @@ viewer.clock.onTick.addEventListener(() => {
   );
 });
 
-// =============================================================
-// TOUR LOOP
-// =============================================================
-async function runTour() {
-  while (autoAdvance) {
+async function runTourGuarded() {
+  const myId = ++tourRunId;
+
+  while (autoAdvance && myId === tourRunId) {
     await goAboveSiteFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     await zoomDownFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     await tiltIntoOrbitPitch();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     headingDeg = 0;
     orbit = true;
     await sleep(holdSeconds * 1000);
+    if (!autoAdvance || myId !== tourRunId) break;
 
     orbit = false;
     await tiltBackToFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     await goAboveSiteFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     activeIndex = (activeIndex + 1) % entities.length;
   }
 }
 
+function toggleAutoTour() {
+  autoAdvance = !autoAdvance;
+
+  if (autoAdvance) {
+    if (entities.length > 0) runTourGuarded();
+  } else {
+    orbit = false;
+    tourRunId++;
+  }
+  updateTourButton();
+}
 
 // =============================================================
-// CSV LOADING (no dependencies)
-// CSV format:
-// - "Coordinates" is "LAT, LON" (backwards for Cesium)
-// - Cesium needs fromDegrees(LON, LAT)
-// Dedupe: keep latest Year per Customer ID with valid coordinates
-//
-// ✅ Important:
-// - This block does NOT move the camera (no zoomTo / flyTo).
-// - It CAN optionally auto-start the tour once points exist.
+// CSV PARSE + UTILS
 // =============================================================
-
-// ---------- CSV parser ----------
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -277,18 +252,15 @@ function parseCSV(text) {
       i++;
       continue;
     }
-
     if (ch === '"') {
       inQuotes = !inQuotes;
       continue;
     }
-
     if (ch === "," && !inQuotes) {
       row.push(cur);
       cur = "";
       continue;
     }
-
     if ((ch === "\n" || ch === "\r") && !inQuotes) {
       if (ch === "\r" && next === "\n") i++;
       row.push(cur);
@@ -297,27 +269,25 @@ function parseCSV(text) {
       row = [];
       continue;
     }
-
     cur += ch;
   }
 
   row.push(cur);
   if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-
   return rows;
 }
 
-// ---------- helpers ----------
 function toNum(x) {
   if (x == null) return null;
-  const s = String(x)
-    .replace(/\u00A0/g, " ")
-    .trim()
-    .replace(/,/g, ""); // allow "1,234.56"
+  const s = String(x).replace(/\u00A0/g, " ").trim().replace(/,/g, "");
   if (!s) return null;
-
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+function parseBool(x) {
+  const s = String(x ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y";
 }
 
 function parseCoordinatesLatLon(coordStr) {
@@ -337,9 +307,36 @@ function parseCoordinatesLatLon(coordStr) {
   return { lat, lon };
 }
 
-// ---------- loader ----------
+function fmtInt(n) {
+  const x = Math.round(Number(n) || 0);
+  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+
+function popToPixelSize(pop) {
+  const p = Math.max(0, Number(pop) || 0);
+  const size = 6 + Math.log10(Math.max(p, 1)) * 6;
+  return clamp(size, 6, 34);
+}
+
+// IMPORTANT: normalize IDs consistently between A and AB
+function normalizeId(v) {
+  if (v == null) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  // if looks numeric (including "123.0") => turn into integer string
+  const n = toNum(s);
+  if (n != null) return String(Math.trunc(n));
+  return s;
+}
+
+// =============================================================
+// BUILD ENTITIES (two-pass join)
+// =============================================================
 async function buildEntitiesFromCSV() {
-  // ✅ Use your actual file name if you changed it in the repo
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
@@ -350,7 +347,6 @@ async function buildEntitiesFromCSV() {
 
   const text = await res.text();
   const rows = parseCSV(text);
-
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
     return;
@@ -360,66 +356,103 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  const idxCustomerId = headers.indexOf("customer id");
-  const idxCustomerName = headers.indexOf("customer name");
-  const idxYear = headers.indexOf("year");
   const idxCoordinates = headers.indexOf("coordinates");
-
   if (idxCoordinates === -1) {
-    console.error('CSV missing required column: "Coordinates"');
+    console.error('CSV missing required column header: "Coordinates"');
     console.log("Headers found:", headers);
     return;
   }
 
-  // keep latest Year per Customer ID
-  const bestByCustomer = new Map();
+  // Fixed column positions (0-based)
+  const IDX_A = 0;   // A: Customer ID (site)
+  const IDX_B = 1;   // B: Customer Name (site)
+  const IDX_AB = 27; // AB: Customer ID (population section)
+  const IDX_AI = 34; // AI: Latest-year flag
+  const IDX_AJ = 35; // AJ: Population number
+
+  // Reset
+  viewer.entities.removeAll();
+  entities.length = 0;
+  siteItems.length = 0;
+
+  // PASS 1: population map from AB/AI/AJ across ALL rows (even far down)
+  const popById = new Map();
+
+  let popCandidates = 0;
+  let popKept = 0;
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
-    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
-    if (!coord) continue;
+    const popId = normalizeId(r[IDX_AB]);
+    if (!popId) continue;
 
-    const year = idxYear !== -1 ? toNum(r[idxYear]) : null;
+    popCandidates++;
 
-    const customerId =
-      idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
-        ? String(r[idxCustomerId]).trim()
-        : `row-${i}`;
+    const isLatest = parseBool(r[IDX_AI]);
+    if (!isLatest) continue;
 
-    const name =
-      idxCustomerName !== -1 && String(r[idxCustomerName]).trim()
-        ? String(r[idxCustomerName]).trim()
-        : `Site ${customerId}`;
+    const pop = toNum(r[IDX_AJ]);
+    if (pop == null) continue;
 
-    const prev = bestByCustomer.get(customerId);
-
-    if (!prev) {
-      bestByCustomer.set(customerId, { name, year, coord });
-      continue;
-    }
-
-    // choose newest year (or first if no year)
-    if (year != null && (prev.year == null || year > prev.year)) {
-      bestByCustomer.set(customerId, { name, year, coord });
+    const prev = popById.get(popId);
+    // if multiple TRUE rows exist, keep the largest pop (safer)
+    if (prev == null || pop > prev) {
+      popById.set(popId, pop);
     }
   }
 
-  // build entities
-  for (const [customerId, item] of bestByCustomer.entries()) {
-    const { lat, lon } = item.coord;
+  popKept = popById.size;
+
+  console.log("Population rows seen (AB non-empty):", popCandidates);
+  console.log("Population IDs kept (AI==TRUE):", popKept);
+
+  // PASS 2: site rows from A/B + Coordinates, then join population by ID
+  let sitesSeen = 0;
+  let plotted = 0;
+  let missingPop = 0;
+  let missingCoords = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+
+    const siteId = normalizeId(r[IDX_A]);
+    const name = String(r[IDX_B] ?? "").trim();
+
+    // treat as "site row" only if it has both A and B
+    if (!siteId || !name) continue;
+    sitesSeen++;
+
+    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
+    if (!coord) {
+      missingCoords++;
+      continue;
+    }
+
+    const pop = popById.get(siteId);
+    if (pop == null) {
+      missingPop++;
+      continue; // only plot when we have latest-year population
+    }
+    if (pop <= 0) continue;
+
+    const { lat, lon } = coord;
 
     const entity = viewer.entities.add({
-      name: item.name,
+      name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
+      properties: {
+        population: pop,
+        customerId: siteId,
+      },
+
       point: {
-        pixelSize: 4,
+        pixelSize: popToPixelSize(pop),
         color: Cesium.Color.YELLOW,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
       billboard: {
@@ -432,39 +465,28 @@ async function buildEntitiesFromCSV() {
       },
 
       label: {
-        text: item.name,
-        font: "20px sans-serif",
+        text: `${name}\n${fmtInt(pop)}`,
+        font: "bold 18px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 4,
+        outlineWidth: 5,
         showBackground: true,
-        backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
-        pixelOffset: new Cesium.Cartesian2(0, -36),
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+        pixelOffset: new Cesium.Cartesian2(0, -44),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
       },
     });
 
     entities.push(entity);
-    siteItems.push({ name: item.name, customerId, lat, lon, entity });
+    siteItems.push({ name, customerId: siteId, lat, lon, population: pop, entity });
+    plotted++;
   }
 
-  console.log(`Loaded ${entities.length} unique sites from ${CSV_URL}`);
-
-  // ✅ Auto-start the tour AFTER points exist
-  // (If your init() already starts it, this won’t hurt, but it may double-start
-  // if your init also calls runTourGuarded. If that happens, delete ONE of them.)
-  if (entities.length > 0) {
-    // If your project uses the guarded tour:
-    if (typeof runTourGuarded === "function") {
-      autoAdvance = true;
-      runTourGuarded();
-    } else if (typeof runTour === "function") {
-      // fallback for older builds
-      autoAdvance = true;
-      runTour();
-    }
-  }
+  console.log("Site rows seen (A+B present):", sitesSeen);
+  console.log("Plotted sites:", plotted);
+  console.log("Skipped (missing coords):", missingCoords);
+  console.log("Skipped (missing pop match A->AB latest):", missingPop);
 }
 
 // =============================================================
@@ -473,16 +495,14 @@ async function buildEntitiesFromCSV() {
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
-  tourRunId++;          // stop any running tour loop
+  tourRunId++;
   updateTourButton();
 
   setActiveIndexFromEntity(entity);
 
-  // Make sure camera is not locked
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
-
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.2,
     offset: new Cesium.HeadingPitchRange(
@@ -515,8 +535,9 @@ function renderSiteList(filterText = "") {
     row.innerHTML = `
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
+      <div class="siteSub">Pop: ${fmtInt(s.population)}</div>
     `;
-    
+
     row.addEventListener("click", (e) => {
       e.stopPropagation();
       flyToSite(s.entity);
@@ -533,10 +554,8 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// CHROME-SAFE DOUBLE CLICK (uses LEFT_CLICK timing)
+// DOUBLE CLICK + HARD UNLOCK
 // =============================================================
-
-// Disable Cesium default dblclick zoom (optional)
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
@@ -557,10 +576,7 @@ safeClickHandler.setInputAction((movement) => {
 
   flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-// =============================================================
-// CHROME HARD-UNLOCK (DOM capture phase)
-// Makes click+drag ALWAYS break orbit/tour in Chrome.
-// =============================================================
+
 canvas.addEventListener(
   "pointerdown",
   (e) => {
@@ -589,8 +605,7 @@ canvas.addEventListener(
 );
 
 // =============================================================
-// KEYBOARD SHORTCUTS (capture mode so UI can't swallow them)
-// - Allows typing in search normally, except shortcut keys.
+// KEYBOARD SHORTCUTS
 // =============================================================
 window.addEventListener(
   "keydown",
@@ -601,10 +616,8 @@ window.addEventListener(
     const k = e.key.toLowerCase();
     const isShortcut = k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
 
-    // Let typing work in search box unless it's a shortcut
     if (isSearch && !isShortcut) return;
 
-    // If shortcut pressed while search focused, blur search and re-focus canvas
     if (isSearch && isShortcut) {
       active.blur();
       canvas.focus();
@@ -622,7 +635,6 @@ window.addEventListener(
     if (k === "r") {
       autoAdvance = false;
       orbit = false;
-
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
       await zoomDownFlat();
@@ -664,9 +676,7 @@ window.addEventListener(
       orbit = false;
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
-      autoAdvance = !autoAdvance;
-      if (autoAdvance) runTour();
-
+      toggleAutoTour();
       e.preventDefault();
       return;
     }
@@ -674,74 +684,15 @@ window.addEventListener(
   true
 );
 
-
 // =============================================================
-// Floating controls: menu + tour toggle + restart
+// Floating controls
 // =============================================================
-
-// Prevent multiple tour loops from stacking
-let tourRunId = 0;
-
-async function runTourGuarded() {
-  const myId = ++tourRunId;
-
-  // runTour() is your existing loop. We just guard against stale runs.
-  while (autoAdvance && myId === tourRunId) {
-    await goAboveSiteFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    await zoomDownFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    await tiltIntoOrbitPitch();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    headingDeg = 0;
-    orbit = true;
-    await sleep(holdSeconds * 1000);
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    orbit = false;
-    await tiltBackToFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    await goAboveSiteFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    activeIndex = (activeIndex + 1) % entities.length;
-  }
-}
-
-
-function toggleAutoTour() {
-  autoAdvance = !autoAdvance;
-
-  if (autoAdvance) {
-    // kick off tour if turning on
-    if (entities.length > 0) runTourGuarded();
-  } else {
-    orbit = false;
-    tourRunId++; // invalidate current run
-  }
-
-  updateTourButton();
-}
-
-function updateTourButton() {
-  const btn = document.getElementById("fcTourBtn");
-  if (!btn) return;
-
-  // ⏸ when running, ▶ when paused
-  btn.textContent = autoAdvance ? "❚❚" : "▶";
-  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
-}
-
 (function wireFloatingControls() {
   const sidebar = document.getElementById("sidebar");
   const menuBtn = document.getElementById("fcMenuBtn");
   const tourBtn = document.getElementById("fcTourBtn");
 
-  if (!sidebar || !menuBtn || !tourBtn ) return;
+  if (!sidebar || !menuBtn || !tourBtn) return;
 
   const mqMobile = window.matchMedia("(max-width: 768px)");
 
@@ -749,15 +700,14 @@ function updateTourButton() {
     return sidebar.classList.contains("sidebarClosed");
   }
 
-  function applyInitialSidebarState() {
-    // Start CLOSED on all devices
-    sidebar.classList.add("sidebarClosed");
-    updateMenuButton();
-  }
   function updateMenuButton() {
-    // show ☰ when closed, ✕ when open
     menuBtn.textContent = isClosed() ? "☰" : "✕";
     menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
+  }
+
+  function applyInitialSidebarState() {
+    sidebar.classList.add("sidebarClosed");
+    updateMenuButton();
   }
 
   function toggleMenu() {
@@ -765,23 +715,19 @@ function updateTourButton() {
     updateMenuButton();
   }
 
-  // menu button always visible
   menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleMenu();
   });
 
-  // tour buttons always visible
   tourBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleAutoTour();
   });
 
-  // keep sidebar clicks from hitting the map
   sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
   sidebar.addEventListener("click", (e) => e.stopPropagation());
 
-  // re-apply open/closed rule on rotate/resize
   if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
   else window.addEventListener("resize", applyInitialSidebarState);
 
@@ -790,7 +736,7 @@ function updateTourButton() {
 })();
 
 // =============================================================
-// Help box close button (X) - runs once
+// Help box close button
 // =============================================================
 (function wireHelpCloseButton() {
   const help = document.getElementById("controlsHelp");
@@ -813,9 +759,12 @@ function updateTourButton() {
   renderSiteList();
 
   if (entities.length === 0) {
-    console.warn("No sites loaded from sites.csv; tour not started.");
+    console.warn("No sites loaded; nothing to show.");
     return;
   }
 
+  viewer.zoomTo(viewer.entities);
+
+  autoAdvance = true;
   runTourGuarded();
 })();
