@@ -1,11 +1,12 @@
 // =============================================================
 // FULL WORKING SCRIPT (no clustering yet)
 // - Loads CSV
-// - Keeps ONLY rows where: "Is this row the latest year for that customer?" == TRUE
-// - Uses "Population (Latest Year Only)" to:
-//    - size the circle point
-//    - show the population number as the label
-// - Keeps your tour + sidebar + shortcuts
+// - Keeps ONLY rows where latest-year flag is TRUE
+// - Label shows:
+//      line 1: Customer Name
+//      line 2: Population (Latest Year Only)
+// - Point size scales with population
+// - Robust header matching + debugging stats
 // =============================================================
 
 // -------------------------------
@@ -47,26 +48,20 @@ viewer.imageryLayers.addImageryProvider(
 // =============================================================
 // KNOBS YOU CARE ABOUT
 // =============================================================
-
-// Camera distances
 const overviewRangeMeters = 1300000;
 const siteRangeMeters = 1200;
 
-// Travel behavior
 const travelSeconds = 1.5;
 const zoomInSeconds = 2.0;
 const tiltSeconds = 1.6;
 
-// Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;
 const orbitSpeedDegPerSec = 8;
 const holdSeconds = 3;
 
-// Flat travel orientation
 const flatHeadingDeg = 0;
 const flatPitchDeg = -90;
 
-// Auto tour
 let autoAdvance = true;
 
 // =============================================================
@@ -80,6 +75,9 @@ let orbit = false;
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
+
+// Prevent multiple tour loops from stacking
+let tourRunId = 0;
 
 // =============================================================
 // HELPERS
@@ -97,9 +95,6 @@ function setActiveIndexFromEntity(entity) {
   if (idx !== -1) activeIndex = idx;
 }
 
-// Prevent multiple tour loops from stacking
-let tourRunId = 0;
-
 function updateTourButton() {
   const btn = document.getElementById("fcTourBtn");
   if (!btn) return;
@@ -111,8 +106,6 @@ function updateTourButton() {
 function hardUnlockCamera() {
   autoAdvance = false;
   orbit = false;
-
-  // invalidate any running tour loop
   tourRunId++;
 
   try {
@@ -121,11 +114,9 @@ function hardUnlockCamera() {
 
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
-
   updateTourButton();
 }
 
-// Wrap flyToBoundingSphere in a Promise
 function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   const target = getActiveSitePosition();
   const offset = new Cesium.HeadingPitchRange(
@@ -154,7 +145,6 @@ function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
   });
 }
 
-// Travel flat above site
 async function goAboveSiteFlat() {
   orbit = false;
   headingDeg = 0;
@@ -166,7 +156,6 @@ async function goAboveSiteFlat() {
   });
 }
 
-// Zoom down flat
 async function zoomDownFlat() {
   orbit = false;
   headingDeg = 0;
@@ -178,7 +167,6 @@ async function zoomDownFlat() {
   });
 }
 
-// Tilt into orbit pitch (no rotation yet)
 async function tiltIntoOrbitPitch() {
   orbit = false;
   headingDeg = 0;
@@ -190,7 +178,6 @@ async function tiltIntoOrbitPitch() {
   });
 }
 
-// Tilt back flat
 async function tiltBackToFlat() {
   orbit = false;
   headingDeg = 0;
@@ -203,7 +190,7 @@ async function tiltBackToFlat() {
 }
 
 // =============================================================
-// ORBIT LOOP (ONLY when orbit === true)
+// ORBIT LOOP
 // =============================================================
 viewer.clock.onTick.addEventListener(() => {
   if (!orbit) return;
@@ -271,12 +258,8 @@ function toggleAutoTour() {
 }
 
 // =============================================================
-// CSV LOADING (simple + reliable)
-// Only plot rows where latest-year flag is TRUE
-// Point size + label = Population (Latest Year Only)
+// CSV LOADING (robust headers + debug stats)
 // =============================================================
-
-// ---------- CSV parser ----------
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -362,8 +345,26 @@ function popToPixelSize(pop) {
   return clamp(size, 6, 34);
 }
 
+// Normalize header so minor differences don't break indexing
+function normHeader(s) {
+  return String(s ?? "")
+    .replace("\ufeff", "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9 ]/g, ""); // drop punctuation
+}
+
+function findHeaderIndex(headers, wanted) {
+  const w = normHeader(wanted);
+  for (let i = 0; i < headers.length; i++) {
+    if (normHeader(headers[i]) === w) return i;
+  }
+  return -1;
+}
+
 async function buildEntitiesFromCSV() {
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv"; // must match your repo file exactly
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
@@ -378,48 +379,52 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  const headers = rows[0].map((h) =>
-    String(h).replace("\ufeff", "").trim().toLowerCase()
-  );
+  const headers = rows[0].map((h) => String(h ?? ""));
 
-  const idxCoordinates = headers.indexOf("coordinates");
-  const idxLatestFlag = headers.indexOf("is this row the latest year for that customer?");
-  const idxPopLatest = headers.indexOf("population (latest year only)");
+  const idxCoordinates = findHeaderIndex(headers, "Coordinates");
+  const idxLatestFlag = findHeaderIndex(headers, "Is this row the latest year for that customer?");
+  const idxPopLatest = findHeaderIndex(headers, "Population (Latest Year Only)");
+  const idxCustomerId = findHeaderIndex(headers, "Customer ID");
+  const idxCustomerName = findHeaderIndex(headers, "Customer Name");
 
-  const idxCustomerId = headers.indexOf("customer id");
-  const idxCustomerName = headers.indexOf("customer name");
-
-  if (idxCoordinates === -1) {
-    console.error('CSV missing required column: "Coordinates"');
-    console.log("Headers found:", headers);
-    return;
-  }
-  if (idxLatestFlag === -1) {
-    console.error('CSV missing required column: "Is this row the latest year for that customer?"');
-    console.log("Headers found:", headers);
-    return;
-  }
-  if (idxPopLatest === -1) {
-    console.error('CSV missing required column: "Population (Latest Year Only)"');
-    console.log("Headers found:", headers);
+  if (idxCoordinates === -1 || idxLatestFlag === -1 || idxPopLatest === -1) {
+    console.error("Missing required column(s). Found headers:", headers);
+    console.error("Need: Coordinates, latest-year flag, Population (Latest Year Only)");
     return;
   }
 
-  // Clear old stuff
   viewer.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
-  let kept = 0;
+  let rowsLatest = 0;
+  let rowsLatestWithPop = 0;
+  let rowsLatestMissingPop = 0;
+  const missingPopExamples = [];
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
     const isLatest = parseBool(r[idxLatestFlag]);
     if (!isLatest) continue;
+    rowsLatest++;
 
-    const pop = toNum(r[idxPopLatest]) ?? 0;
-    if (pop <= 0) continue;
+    const pop = toNum(r[idxPopLatest]);
+    if (pop == null || pop <= 0) {
+      rowsLatestMissingPop++;
+      if (missingPopExamples.length < 6) {
+        missingPopExamples.push({
+          row: i + 1,
+          customer: idxCustomerName !== -1 ? String(r[idxCustomerName] ?? "").trim() : "",
+          customerId: idxCustomerId !== -1 ? String(r[idxCustomerId] ?? "").trim() : "",
+          rawPopulation: r[idxPopLatest],
+        });
+      }
+      // IMPORTANT:
+      // If you still want to SHOW a dot even when population missing,
+      // comment out the `continue;` below and set pop=0 (or a default).
+      continue;
+    }
 
     const coord = parseCoordinatesLatLon(r[idxCoordinates]);
     if (!coord) continue;
@@ -454,7 +459,6 @@ async function buildEntitiesFromCSV() {
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
 
-      // If you suspect icon path problems, comment this billboard block out.
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -465,14 +469,15 @@ async function buildEntitiesFromCSV() {
       },
 
       label: {
-        text: fmtInt(pop),
+        // ✅ Customer Name above population number
+        text: `${name}\n${fmtInt(pop)}`,
         font: "bold 18px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 5,
         showBackground: true,
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        pixelOffset: new Cesium.Cartesian2(0, -34),
+        pixelOffset: new Cesium.Cartesian2(0, -40),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
       },
@@ -480,10 +485,15 @@ async function buildEntitiesFromCSV() {
 
     entities.push(entity);
     siteItems.push({ name, customerId, lat, lon, population: pop, entity });
-    kept++;
+    rowsLatestWithPop++;
   }
 
-  console.log(`Loaded ${kept} latest-year sites with population from ${CSV_URL}`);
+  console.log(`Latest-year rows total: ${rowsLatest}`);
+  console.log(`Latest-year rows with population: ${rowsLatestWithPop}`);
+  console.log(`Latest-year rows missing/zero population: ${rowsLatestMissingPop}`);
+  if (missingPopExamples.length) {
+    console.log("Examples of latest-year rows missing population:", missingPopExamples);
+  }
 }
 
 // =============================================================
@@ -496,11 +506,9 @@ function flyToSite(entity) {
   updateTourButton();
 
   setActiveIndexFromEntity(entity);
-
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
-
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.2,
     offset: new Cesium.HeadingPitchRange(
@@ -528,247 +536,4 @@ function renderSiteList(filterText = "") {
     : siteItems;
 
   filtered.forEach((s) => {
-    const row = document.createElement("div");
-    row.className = "siteRow";
-    row.innerHTML = `
-      <div>${s.name}</div>
-      <div class="siteSub">ID: ${s.customerId}</div>
-      <div class="siteSub">Pop: ${fmtInt(s.population)}</div>
-    `;
-
-    row.addEventListener("click", (e) => {
-      e.stopPropagation();
-      flyToSite(s.entity);
-    });
-
-    listEl.appendChild(row);
-  });
-}
-
-function wireSearchBox() {
-  const input = document.getElementById("siteSearch");
-  if (!input) return;
-  input.addEventListener("input", () => renderSiteList(input.value));
-}
-
-// =============================================================
-// CHROME-SAFE DOUBLE CLICK
-// =============================================================
-viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
-  Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
-);
-
-let lastClickAt = 0;
-const DOUBLE_CLICK_MS = 320;
-
-const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-safeClickHandler.setInputAction((movement) => {
-  const now = performance.now();
-  const isDouble = now - lastClickAt < DOUBLE_CLICK_MS;
-  lastClickAt = now;
-
-  if (!isDouble) return;
-
-  const picked = viewer.scene.pick(movement.position);
-  if (!picked || !picked.id || !picked.id.position) return;
-
-  flyToSite(picked.id);
-}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
-// =============================================================
-// HARD UNLOCK ON USER INPUT
-// =============================================================
-canvas.addEventListener(
-  "pointerdown",
-  (e) => {
-    if (e.target !== canvas) return;
-    hardUnlockCamera();
-  },
-  true
-);
-
-canvas.addEventListener(
-  "wheel",
-  (e) => {
-    if (e.target !== canvas) return;
-    hardUnlockCamera();
-  },
-  { capture: true, passive: true }
-);
-
-canvas.addEventListener(
-  "touchstart",
-  (e) => {
-    if (e.target !== canvas) return;
-    hardUnlockCamera();
-  },
-  { capture: true, passive: true }
-);
-
-// =============================================================
-// KEYBOARD SHORTCUTS
-// =============================================================
-window.addEventListener(
-  "keydown",
-  async (e) => {
-    const active = document.activeElement;
-    const isSearch = active && active.id === "siteSearch";
-
-    const k = e.key.toLowerCase();
-    const isShortcut = k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
-
-    if (isSearch && !isShortcut) return;
-
-    if (isSearch && isShortcut) {
-      active.blur();
-      canvas.focus();
-    }
-
-    if (k === "h") {
-      const help = document.getElementById("controlsHelp");
-      if (help) help.classList.toggle("controlsHelpHidden");
-      e.preventDefault();
-      return;
-    }
-
-    if (entities.length === 0) return;
-
-    if (k === "r") {
-      autoAdvance = false;
-      orbit = false;
-
-      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-      await zoomDownFlat();
-      await tiltIntoOrbitPitch();
-      headingDeg = 0;
-      orbit = true;
-
-      e.preventDefault();
-      return;
-    }
-
-    if (k === "n") {
-      autoAdvance = false;
-      orbit = false;
-      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-      activeIndex = (activeIndex + 1) % entities.length;
-      await goAboveSiteFlat();
-      await zoomDownFlat();
-
-      e.preventDefault();
-      return;
-    }
-
-    if (k === "p") {
-      autoAdvance = false;
-      orbit = false;
-      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-      activeIndex = (activeIndex - 1 + entities.length) % entities.length;
-      await goAboveSiteFlat();
-      await zoomDownFlat();
-
-      e.preventDefault();
-      return;
-    }
-
-    if (k === "t") {
-      orbit = false;
-      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-
-      toggleAutoTour();
-      e.preventDefault();
-      return;
-    }
-  },
-  true
-);
-
-// =============================================================
-// Floating controls: menu + tour toggle
-// =============================================================
-(function wireFloatingControls() {
-  const sidebar = document.getElementById("sidebar");
-  const menuBtn = document.getElementById("fcMenuBtn");
-  const tourBtn = document.getElementById("fcTourBtn");
-
-  if (!sidebar || !menuBtn || !tourBtn) return;
-
-  const mqMobile = window.matchMedia("(max-width: 768px)");
-
-  function isClosed() {
-    return sidebar.classList.contains("sidebarClosed");
-  }
-
-  function updateMenuButton() {
-    menuBtn.textContent = isClosed() ? "☰" : "✕";
-    menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
-  }
-
-  function applyInitialSidebarState() {
-    sidebar.classList.add("sidebarClosed");
-    updateMenuButton();
-  }
-
-  function toggleMenu() {
-    sidebar.classList.toggle("sidebarClosed");
-    updateMenuButton();
-  }
-
-  menuBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleMenu();
-  });
-
-  tourBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleAutoTour();
-  });
-
-  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
-  sidebar.addEventListener("click", (e) => e.stopPropagation());
-
-  if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
-  else window.addEventListener("resize", applyInitialSidebarState);
-
-  applyInitialSidebarState();
-  updateTourButton();
-})();
-
-// =============================================================
-// Help box close button
-// =============================================================
-(function wireHelpCloseButton() {
-  const help = document.getElementById("controlsHelp");
-  const closeBtn = document.getElementById("helpCloseBtn");
-  if (!help || !closeBtn) return;
-
-  closeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    help.classList.add("controlsHelpHidden");
-  });
-})();
-
-// =============================================================
-// START
-// =============================================================
-(async function init() {
-  await buildEntitiesFromCSV();
-
-  wireSearchBox();
-  renderSiteList();
-
-  if (entities.length === 0) {
-    console.warn("No latest-year sites loaded; nothing to show.");
-    return;
-  }
-
-  // Ensure you SEE the points immediately
-  viewer.zoomTo(viewer.entities);
-
-  // Start tour
-  autoAdvance = true;
-  runTourGuarded();
-})();
+    const row = document.
