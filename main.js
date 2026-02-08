@@ -266,6 +266,7 @@ async function runTour() {
 // =============================================================
 
 const popSource = new Cesium.CustomDataSource("populationSites");
+viewer.dataSources.add(popSource); // ✅ REQUIRED or nothing renders
 
 // clustering knobs
 const CLUSTER_PIXEL_RANGE = 55;
@@ -920,10 +921,15 @@ function updateTourButton() {
 // START
 // =============================================================
 (async function init() {
-  setupPopulationClustering();  // enable clustering
-  await buildEntitiesFromCSV(); // create points directly in popSource
+  setupPopulationClustering();
+  await buildEntitiesFromCSV();
+
+  await viewer.zoomTo(popSource); // ✅ jump camera to your data so you can see it
 
   console.log("entities:", entities.length, "popSource:", popSource.entities.values.length);
+
+  popSource.clustering.enabled = false;
+  popSource.clustering.enabled = true;
 
   wireSearchBox();
   renderSiteList();
