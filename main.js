@@ -518,51 +518,93 @@ function makeBubbleImage(size = 64) {
   return c.toDataURL("image/png");
 }
 
+function makeBubbleImage(size = 96) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  const r = size / 2;
+
+  // soft shadow
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 2;
+
+  // fill circle
+  ctx.beginPath();
+  ctx.arc(r, r, r - 6, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fill();
+
+  // ring
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.stroke();
+
+  return c.toDataURL("image/png");
+}
+
+let _bubbleImg; // cached so we don’t redraw every event
+
+
 function setupPopulationClustering() {
   // 1) enable clustering
   popSource.clustering.enabled = true;
   popSource.clustering.pixelRange = CLUSTER_PIXEL_RANGE;
   popSource.clustering.minimumClusterSize = CLUSTER_MIN_SIZE;
 
-  // 2) cluster styling + population sum
-  //    This event fires every time clustering recomputes (zoom/pan)
-  popSource.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
-    // Sum populations from original entities
-    let totalPop = 0;
-    for (const e of clusteredEntities) {
-      const p = e.properties && e.properties.population
-        ? e.properties.population.getValue()
-        : 0;
-      totalPop += Number(p) || 0;
+let lastResetFrame = -1;
+
+popSource.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
+  // Reset visibility once per frame (so unclustered points come back)
+  const frame = viewer.scene.frameState.frameNumber;
+  if (frame !== lastResetFrame) {
+    lastResetFrame = frame;
+    const all = popSource.entities.values;
+    for (const e of all) {
+      if (e.point) e.point.show = true;
+      if (e.billboard) e.billboard.show = true;
+      if (e.label) e.label.show = true;
     }
+  }
 
-    // Hide default pin + show a "bubble"
-    cluster.billboard.show = true;
-    cluster.billboard.image = makeBubbleImage(72);  // ✅ bubble graphic
-    cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-    cluster.billboard.width = 36;
-    cluster.billboard.height = 36;
-    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+  // Sum population + hide originals that are in this cluster (prevents “fighting”)
+  let totalPop = 0;
+  for (const e of clusteredEntities) {
+    const p = e.properties && e.properties.population
+      ? e.properties.population.getValue()
+      : 0;
+    totalPop += Number(p) || 0;
 
-    // Label with summed population
-    cluster.label.show = totalPop > SHOW_POP_LABEL_OVER;
-    cluster.label.text = fmtInt(totalPop);
-    cluster.label.font = "bold 18px sans-serif";
-    cluster.label.fillColor = Cesium.Color.WHITE;
-    cluster.label.outlineColor = Cesium.Color.BLACK;
-    cluster.label.outlineWidth = 5;
-    cluster.label.showBackground = true;
-    cluster.label.backgroundColor = new Cesium.Color(0, 0, 0, 0.55);
+    if (e.point) e.point.show = false;
+    if (e.billboard) e.billboard.show = false;
+    if (e.label) e.label.show = false;
+  }
 
-    // Optional: scale bubble by population (subtle)
-    // (Cesium's default cluster billboard has a size; scale it a bit)
-    const scale = Cesium.Math.clamp(0.9 + Math.log10(Math.max(totalPop, 10)) * 0.15, 0.9, 2.2);
-    cluster.billboard.scale = scale;
+  // Cache bubble image once
+  if (!_bubbleImg) _bubbleImg = makeBubbleImage(96);
 
-    // Optional: store total on the cluster for click handlers later
-    cluster.properties = cluster.properties || new Cesium.PropertyBag();
-    cluster.properties.population = totalPop;
-  });
+  // Bubble billboard
+  cluster.billboard.show = true;
+  cluster.billboard.image = _bubbleImg;
+  cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+  cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+  // Scale bubble a bit by population
+  const s = Cesium.Math.clamp(1.0 + Math.log10(Math.max(totalPop, 10)) * 0.18, 1.0, 2.2);
+  cluster.billboard.width = 34 * s;
+  cluster.billboard.height = 34 * s;
+
+  // Number label (no black rectangle background)
+  cluster.label.show = true;
+  cluster.label.text = fmtInt(totalPop);
+  cluster.label.font = "bold 18px sans-serif";
+  cluster.label.fillColor = Cesium.Color.WHITE;
+  cluster.label.outlineColor = Cesium.Color.BLACK;
+  cluster.label.outlineWidth = 6;
+  cluster.label.showBackground = false; // ✅ removes the black boxes you’re seeing
+  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+});
 
   // 3) add data source to viewer
   viewer.dataSources.add(popSource);
