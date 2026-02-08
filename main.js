@@ -248,117 +248,6 @@ async function runTour() {
   }
 }
 
-// =============================================================
-// POPULATION CLUSTERING (zoom-out = combined bubble with summed population)
-// Put this block AFTER buildEntitiesFromCSV() is defined,
-// and BEFORE init() runs (or call setupPopulationClustering() inside init()
-// right after buildEntitiesFromCSV()).
-//
-// What it does:
-// - Creates a CustomDataSource so Cesium's built-in clustering works
-// - Copies your entities into that data source
-// - When clustered, sums entity.properties.population
-// - Shows a single "bubble" label with the summed population
-//
-// NOTE:
-// This is "combine when zoomed out" automatically.
-// When you zoom in, clusters naturally split back into the original points.
-// =============================================================
-
-const popSource = new Cesium.CustomDataSource("populationSites");
-viewer.dataSources.add(popSource); // ✅ REQUIRED or nothing renders
-
-// clustering knobs
-const CLUSTER_PIXEL_RANGE = 55;
-const CLUSTER_MIN_SIZE = 2;
-
-function fmtInt(n) {
-  const x = Math.round(Number(n) || 0);
-  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-let _bubbleImg = null;
-let _lastResetFrame = -1;
-
-function makeBubbleImage(size = 96) {
-  const c = document.createElement("canvas");
-  c.width = c.height = size;
-  const ctx = c.getContext("2d");
-  const r = size / 2;
-
-  ctx.shadowColor = "rgba(0,0,0,0.35)";
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetY = 2;
-
-  ctx.beginPath();
-  ctx.arc(r, r, r - 6, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-  ctx.fill();
-
-  ctx.shadowBlur = 0;
-  ctx.lineWidth = 5;
-  ctx.strokeStyle = "rgba(255,255,255,0.9)";
-  ctx.stroke();
-
-  return c.toDataURL("image/png");
-}
-
-function setupPopulationClustering() {
-  popSource.clustering.enabled = true;
-  popSource.clustering.pixelRange = CLUSTER_PIXEL_RANGE;
-  popSource.clustering.minimumClusterSize = CLUSTER_MIN_SIZE;
-
-  popSource.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
-    // reset visibility once per frame
-    const frame = viewer.scene.frameState.frameNumber;
-    if (frame !== _lastResetFrame) {
-      _lastResetFrame = frame;
-      for (const e of popSource.entities.values) {
-        if (e.point) e.point.show = true;
-        if (e.billboard) e.billboard.show = true;
-        if (e.label) e.label.show = true;
-      }
-    }
-
-    let totalPop = 0;
-    for (const e of clusteredEntities) {
-      const p = e.properties && e.properties.population
-        ? e.properties.population.getValue()
-        : 0;
-      totalPop += Number(p) || 0;
-
-      // hide originals so they don’t fight the cluster
-      if (e.point) e.point.show = false;
-      if (e.billboard) e.billboard.show = false;
-      if (e.label) e.label.show = false;
-    }
-
-    if (!_bubbleImg) _bubbleImg = makeBubbleImage(96);
-
-    cluster.billboard.show = true;
-    cluster.billboard.image = _bubbleImg;
-    cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-    const s = Cesium.Math.clamp(
-      1.0 + Math.log10(Math.max(totalPop, 10)) * 0.18,
-      1.0,
-      2.2
-    );
-    cluster.billboard.width = 34 * s;
-    cluster.billboard.height = 34 * s;
-
-    cluster.label.show = true;
-    cluster.label.text = fmtInt(totalPop);
-    cluster.label.font = "bold 18px sans-serif";
-    cluster.label.fillColor = Cesium.Color.WHITE;
-    cluster.label.outlineColor = Cesium.Color.BLACK;
-    cluster.label.outlineWidth = 6;
-    cluster.label.showBackground = false;
-    cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-  });
-}
-
 
 // =============================================================
 // CSV LOADING (no dependencies)
@@ -366,8 +255,12 @@ function setupPopulationClustering() {
 // - "Coordinates" is "LAT, LON" (backwards for Cesium)
 // - Cesium needs fromDegrees(LON, LAT)
 // Dedupe: keep latest Year per Customer ID with valid coordinates
+//
+// ✅ Important:
+// - This block does NOT move the camera (no zoomTo / flyTo).
+// - It CAN optionally auto-start the tour once points exist.
 // =============================================================
-console.log("popSource exists?", !!popSource);
+
 // ---------- CSV parser ----------
 function parseCSV(text) {
   const rows = [];
@@ -446,6 +339,7 @@ function parseCoordinatesLatLon(coordStr) {
 
 // ---------- loader ----------
 async function buildEntitiesFromCSV() {
+  // ✅ Use your actual file name if you changed it in the repo
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
@@ -470,7 +364,6 @@ async function buildEntitiesFromCSV() {
   const idxCustomerName = headers.indexOf("customer name");
   const idxYear = headers.indexOf("year");
   const idxCoordinates = headers.indexOf("coordinates");
-  const idxPopulation = headers.indexOf("population"); // ✅ NEW
 
   if (idxCoordinates === -1) {
     console.error('CSV missing required column: "Coordinates"');
@@ -499,20 +392,16 @@ async function buildEntitiesFromCSV() {
         ? String(r[idxCustomerName]).trim()
         : `Site ${customerId}`;
 
-    // ✅ NEW: read population
-    const population =
-      idxPopulation !== -1 ? (toNum(r[idxPopulation]) ?? 0) : 0;
-
     const prev = bestByCustomer.get(customerId);
 
     if (!prev) {
-      bestByCustomer.set(customerId, { name, year, coord, population }); // ✅ NEW
+      bestByCustomer.set(customerId, { name, year, coord });
       continue;
     }
 
     // choose newest year (or first if no year)
     if (year != null && (prev.year == null || year > prev.year)) {
-      bestByCustomer.set(customerId, { name, year, coord, population }); // ✅ NEW
+      bestByCustomer.set(customerId, { name, year, coord });
     }
   }
 
@@ -520,15 +409,9 @@ async function buildEntitiesFromCSV() {
   for (const [customerId, item] of bestByCustomer.entries()) {
     const { lat, lon } = item.coord;
 
-    const entity = popSource.entities.add({
+    const entity = viewer.entities.add({
       name: item.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
-
-      // ✅ NEW: store population on entity for clustering + UI
-      properties: {
-        population: item.population,
-        customerId: customerId,
-      },
 
       point: {
         pixelSize: 4,
@@ -558,28 +441,31 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
         pixelOffset: new Cesium.Cartesian2(0, -36),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      
-        // Show names only when closer (prevents fighting clusters)
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 80_000),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
       },
     });
 
     entities.push(entity);
-
-    // ✅ NEW: keep population in siteItems too
-    siteItems.push({
-      name: item.name,
-      customerId,
-      lat,
-      lon,
-      population: item.population,
-      entity,
-    });
+    siteItems.push({ name: item.name, customerId, lat, lon, entity });
   }
 
   console.log(`Loaded ${entities.length} unique sites from ${CSV_URL}`);
-}
 
+  // ✅ Auto-start the tour AFTER points exist
+  // (If your init() already starts it, this won’t hurt, but it may double-start
+  // if your init also calls runTourGuarded. If that happens, delete ONE of them.)
+  if (entities.length > 0) {
+    // If your project uses the guarded tour:
+    if (typeof runTourGuarded === "function") {
+      autoAdvance = true;
+      runTourGuarded();
+    } else if (typeof runTour === "function") {
+      // fallback for older builds
+      autoAdvance = true;
+      runTour();
+    }
+  }
+}
 
 // =============================================================
 // SIDEBAR UI
@@ -921,19 +807,15 @@ function updateTourButton() {
 // START
 // =============================================================
 (async function init() {
-  setupPopulationClustering();
   await buildEntitiesFromCSV();
-
-  await viewer.zoomTo(popSource); // ✅ jump camera to your data so you can see it
-
-  console.log("entities:", entities.length, "popSource:", popSource.entities.values.length);
-
-  popSource.clustering.enabled = false;
-  popSource.clustering.enabled = true;
 
   wireSearchBox();
   renderSiteList();
 
-  if (entities.length === 0) return;
+  if (entities.length === 0) {
+    console.warn("No sites loaded from sites.csv; tour not started.");
+    return;
+  }
+
   runTourGuarded();
 })();
