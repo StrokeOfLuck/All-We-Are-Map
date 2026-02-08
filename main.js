@@ -1,10 +1,8 @@
 // =============================================================
 // FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
-// PASS 1: Build populationById from rows where
-//   "Is this row the latest year for that customer?" == TRUE
-//   using "Population (Latest Year Only)"
+// PASS 1: Build populationById from population block:
+//   Use Customer ID column nearest to AI + AJ where AI==TRUE
 // PASS 2: Plot ALL coordinate sites (Customer ID + Customer Name + Coordinates)
-//   Population is optional: shown under name if found in populationById
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -174,7 +172,6 @@ async function tiltBackToFlat() {
   });
 }
 
-// Orbit tick
 viewer.clock.onTick.addEventListener(() => {
   if (!orbit) return;
   if (isFlying) return;
@@ -320,18 +317,33 @@ function clamp(x, a, b) {
 }
 
 function popToPixelSize(pop) {
-  // If pop missing, return a default readable size
   if (pop == null) return 10;
-
   const p = Math.max(0, Number(pop) || 0);
   const size = 6 + Math.log10(Math.max(p, 1)) * 6;
   return clamp(size, 6, 34);
 }
 
+// ✅ NEW: pick the Customer ID column that is physically closest to AI (latest flag)
+function findNearestCustomerIdColumn(headers, idxLatestFlag) {
+  const isCustomerIdHeader = (h) => String(h || "").trim().toLowerCase() === "customer id";
+
+  // Prefer LEFT side (AB is left of AI)
+  for (let d = 1; d <= 30; d++) {
+    const left = idxLatestFlag - d;
+    if (left >= 0 && isCustomerIdHeader(headers[left])) return left;
+  }
+
+  // Fallback: try right side
+  for (let d = 1; d <= 30; d++) {
+    const right = idxLatestFlag + d;
+    if (right < headers.length && isCustomerIdHeader(headers[right])) return right;
+  }
+
+  return null;
+}
+
 // =============================================================
-// MAIN: Build points from CSV
-// - PASS 1: build populationById from latest-year TRUE rows
-// - PASS 2: plot ALL coordinate sites; attach population if found
+// MAIN
 // =============================================================
 async function buildEntitiesFromCSV() {
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
@@ -353,93 +365,70 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
-  // Main block columns (A/B/H in your screenshot)
+  // Main coordinate block
   const idxCoord = headers.indexOf("coordinates");
   const idxMainId = headers.indexOf("customer id");
   const idxMainName = headers.indexOf("customer name");
 
-  // Pop block columns (AI/AJ + some "customer id*" column around AB)
+  // Population block columns
   const idxLatestFlag = headers.indexOf("is this row the latest year for that customer?");
   const idxPopLatest = headers.indexOf("population (latest year only)");
 
   if (idxCoord === -1 || idxMainId === -1 || idxMainName === -1) {
-    console.error("Missing required columns for coordinate sites.", {
-      coordinates: idxCoord,
-      customerId: idxMainId,
-      customerName: idxMainName,
-    });
+    console.error("Missing required columns for coordinate sites.");
     console.log("Headers found:", headers);
     return;
   }
-
   if (idxLatestFlag === -1 || idxPopLatest === -1) {
-    console.error("Missing required columns for population lookup.", {
-      latestFlag: idxLatestFlag,
-      popLatest: idxPopLatest,
-    });
+    console.error("Missing required columns for population lookup.");
     console.log("Headers found:", headers);
     return;
   }
 
-  // --- PASS 1: Build populationById ---
-  // We must find which duplicate customer-id column is used in the population rows.
-  const idCandidates = headers
-    .map((h, i) => ({ h, i }))
-    .filter((x) => x.h.startsWith("customer id"));
-
-  let idxPopId = null;
-
-  // pick the first candidate that appears populated on AI==TRUE rows
-  for (const cand of idCandidates) {
-    let count = 0;
-    for (let r = 1; r < rows.length; r++) {
-      if (!parseBool(rows[r][idxLatestFlag])) continue;
-      if (toNum(rows[r][cand.i]) != null) count++;
-      if (count >= 5) break;
-    }
-    if (count >= 5) {
-      idxPopId = cand.i;
-      break;
-    }
-  }
-
+  // ✅ Correct: force AB by finding Customer ID nearest to AI
+  const idxPopId = findNearestCustomerIdColumn(headers, idxLatestFlag);
   if (idxPopId == null) {
-    console.error("Could not detect the population-block Customer ID column.");
-    console.log("Customer ID candidates:", idCandidates.map((x) => x.h));
+    console.error("Could not find the population-block Customer ID column near AI.");
+    console.log("Headers found:", headers);
     return;
   }
 
+  // --- PASS 1: populationById from AB + AI + AJ ---
   const populationById = new Map();
+
+  let latestTrueRows = 0;
+  let savedPop = 0;
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
-    const isLatest = parseBool(row[idxLatestFlag]);
-    if (!isLatest) continue;
+    if (!parseBool(row[idxLatestFlag])) continue;
+    latestTrueRows++;
 
-    const popIdNum = toNum(row[idxPopId]);
-    if (popIdNum == null) continue;
+    const idNum = toNum(row[idxPopId]);
+    if (idNum == null) continue;
 
     const pop = toNum(row[idxPopLatest]);
-    if (pop == null) continue; // if blank, ignore
+    // Keep even 0.00 if that’s what the sheet has
+    if (pop == null) continue;
 
-    const idStr = String(Math.trunc(popIdNum));
+    const idStr = String(Math.trunc(idNum));
     populationById.set(idStr, pop);
+    savedPop++;
   }
 
-  console.log(`Population block ID column detected as: "${headers[idxPopId]}"`);
-  console.log(`Population entries found (AI==TRUE): ${populationById.size}`);
+  console.log(`Population ID column used: index ${idxPopId} ("${headers[idxPopId]}")`);
+  console.log(`AI==TRUE rows scanned: ${latestTrueRows}`);
+  console.log(`Population entries saved: ${savedPop}`);
 
-  // --- PASS 2: Plot ALL coordinate sites ---
+  // --- PASS 2: plot ALL coordinate sites ---
   viewer.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
-  // If there are duplicates of the same customer in the main block, keep one (first w/ coords)
   const seenMainIds = new Set();
 
   let created = 0;
-  let coordSites = 0;
   let withPop = 0;
 
   for (let r = 1; r < rows.length; r++) {
@@ -452,9 +441,8 @@ async function buildEntitiesFromCSV() {
     if (idNum == null || !name || !coord) continue;
 
     const idStr = String(Math.trunc(idNum));
-    coordSites++;
 
-    // optional: dedupe main block by ID so you don't plot duplicates
+    // Deduplicate main block by ID
     if (seenMainIds.has(idStr)) continue;
     seenMainIds.add(idStr);
 
@@ -463,8 +451,8 @@ async function buildEntitiesFromCSV() {
 
     const { lat, lon } = coord;
 
-    const labelText =
-      pop != null ? `${name}\n${fmtInt(pop)}` : `${name}`;
+    // ✅ Name above population (two-line label)
+    const labelText = pop != null ? `${name}\n${fmtInt(pop)}` : `${name}`;
 
     const entity = viewer.entities.add({
       name,
@@ -511,18 +499,8 @@ async function buildEntitiesFromCSV() {
     created++;
   }
 
-  console.log(`Coordinate sites found (rows w/ coords+id+name): ${coordSites}`);
-  console.log(`Points created (deduped by Customer ID): ${created}`);
-  console.log(`Points that have population (AI==TRUE match): ${withPop}`);
-
-  // Helpful: list the first few IDs that have coords but no population match
-  const missingPop = siteItems.filter((s) => s.population == null).slice(0, 25);
-  if (missingPop.length) {
-    console.warn(
-      "Example coordinate IDs missing population match (AI==TRUE row not found):",
-      missingPop.map((s) => s.customerId)
-    );
-  }
+  console.log(`Points created: ${created}`);
+  console.log(`Points with population matched (AI TRUE row found): ${withPop}`);
 }
 
 // =============================================================
