@@ -490,9 +490,8 @@ async function buildEntitiesFromCSV() {
 const popSource = new Cesium.CustomDataSource("populationSites");
 
 // clustering knobs
-const CLUSTER_PIXEL_RANGE = 55;      // how close points must be (in screen px) to cluster
-const CLUSTER_MIN_SIZE = 2;          // minimum points to form a cluster
-const SHOW_POP_LABEL_OVER = 0;       // 0 = always show pop label on cluster
+const CLUSTER_PIXEL_RANGE = 55;
+const CLUSTER_MIN_SIZE = 2;
 
 function fmtInt(n) {
   const x = Math.round(Number(n) || 0);
@@ -524,72 +523,71 @@ function makeBubbleImage(size = 96) {
 
   return c.toDataURL("image/png");
 }
+
 function setupPopulationClustering() {
   popSource.clustering.enabled = true;
   popSource.clustering.pixelRange = CLUSTER_PIXEL_RANGE;
   popSource.clustering.minimumClusterSize = CLUSTER_MIN_SIZE;
 
   popSource.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
-    try {
-      // Reset visibility once per frame (so unclustered points come back)
-      const frame = viewer.scene.frameState.frameNumber;
-      if (frame !== _lastResetFrame) {
-        _lastResetFrame = frame;
-        const all = popSource.entities.values;
-        for (const e of all) {
-          if (e.point) e.point.show = true;
-          if (e.billboard) e.billboard.show = true;
-          if (e.label) e.label.show = true;
-        }
+    // reset visibility once per frame
+    const frame = viewer.scene.frameState.frameNumber;
+    if (frame !== _lastResetFrame) {
+      _lastResetFrame = frame;
+      for (const e of popSource.entities.values) {
+        if (e.point) e.point.show = true;
+        if (e.billboard) e.billboard.show = true;
+        if (e.label) e.label.show = true;
       }
-
-      // Sum population + hide originals that are in this cluster (prevents “fighting”)
-      let totalPop = 0;
-      for (const e of clusteredEntities) {
-        const p = e.properties && e.properties.population
-          ? e.properties.population.getValue()
-          : 0;
-        totalPop += Number(p) || 0;
-
-        if (e.point) e.point.show = false;
-        if (e.billboard) e.billboard.show = false;
-        if (e.label) e.label.show = false;
-      }
-
-      if (!_bubbleImg) _bubbleImg = makeBubbleImage(96);
-
-      // Bubble billboard
-      cluster.billboard.show = true;
-      cluster.billboard.image = _bubbleImg;
-      cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-      cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-      // Scale bubble by population
-      const s = Cesium.Math.clamp(
-        1.0 + Math.log10(Math.max(totalPop, 10)) * 0.18,
-        1.0,
-        2.2
-      );
-      cluster.billboard.width = 34 * s;
-      cluster.billboard.height = 34 * s;
-
-      // Number label (no black rectangle background)
-      cluster.label.show = true;
-      cluster.label.text = fmtInt(totalPop);
-      cluster.label.font = "bold 18px sans-serif";
-      cluster.label.fillColor = Cesium.Color.WHITE;
-      cluster.label.outlineColor = Cesium.Color.BLACK;
-      cluster.label.outlineWidth = 6;
-      cluster.label.showBackground = false;
-      cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-    } catch (err) {
-      console.error("Cluster event error:", err);
     }
+
+    let totalPop = 0;
+    for (const e of clusteredEntities) {
+      const p = e.properties && e.properties.population
+        ? e.properties.population.getValue()
+        : 0;
+      totalPop += Number(p) || 0;
+
+      // hide originals so they don’t fight the cluster
+      if (e.point) e.point.show = false;
+      if (e.billboard) e.billboard.show = false;
+      if (e.label) e.label.show = false;
+    }
+
+    if (!_bubbleImg) _bubbleImg = makeBubbleImage(96);
+
+    cluster.billboard.show = true;
+    cluster.billboard.image = _bubbleImg;
+    cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+    const s = Cesium.Math.clamp(
+      1.0 + Math.log10(Math.max(totalPop, 10)) * 0.18,
+      1.0,
+      2.2
+    );
+    cluster.billboard.width = 34 * s;
+    cluster.billboard.height = 34 * s;
+
+    cluster.label.show = true;
+    cluster.label.text = fmtInt(totalPop);
+    cluster.label.font = "bold 18px sans-serif";
+    cluster.label.fillColor = Cesium.Color.WHITE;
+    cluster.label.outlineColor = Cesium.Color.BLACK;
+    cluster.label.outlineWidth = 6;
+    cluster.label.showBackground = false;
+    cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
   });
 
   viewer.dataSources.add(popSource);
 }
 
+function moveEntitiesIntoPopulationSource() {
+  for (const e of entities) {
+    viewer.entities.remove(e);
+    popSource.entities.add(e);
+  }
+}
 
  
 /**
@@ -606,8 +604,6 @@ function moveEntitiesIntoPopulationSource() {
     popSource.entities.add(e);
   }
 }
-
-console.log("entities:", entities.length, "popSource:", popSource.entities.values.length);
 
 
 // =============================================================
@@ -953,6 +949,8 @@ function updateTourButton() {
   setupPopulationClustering();          // ✅ turn clustering on
   await buildEntitiesFromCSV();         // ✅ load/create entities[]
   moveEntitiesIntoPopulationSource();   // ✅ put entities into popSource so clustering can see them
+
+  console.log("entities:", entities.length, "popSource:", popSource.entities.values.length);
 
   wireSearchBox();
   renderSiteList();
