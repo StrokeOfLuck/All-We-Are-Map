@@ -255,10 +255,6 @@ async function runTour() {
 // - "Coordinates" is "LAT, LON" (backwards for Cesium)
 // - Cesium needs fromDegrees(LON, LAT)
 // Dedupe: keep latest Year per Customer ID with valid coordinates
-//
-// ✅ Important:
-// - This block does NOT move the camera (no zoomTo / flyTo).
-// - It CAN optionally auto-start the tour once points exist.
 // =============================================================
 
 // ---------- CSV parser ----------
@@ -339,7 +335,6 @@ function parseCoordinatesLatLon(coordStr) {
 
 // ---------- loader ----------
 async function buildEntitiesFromCSV() {
-  // ✅ Use your actual file name if you changed it in the repo
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
@@ -364,6 +359,7 @@ async function buildEntitiesFromCSV() {
   const idxCustomerName = headers.indexOf("customer name");
   const idxYear = headers.indexOf("year");
   const idxCoordinates = headers.indexOf("coordinates");
+  const idxPopulation = headers.indexOf("population"); // ✅ NEW
 
   if (idxCoordinates === -1) {
     console.error('CSV missing required column: "Coordinates"');
@@ -392,16 +388,20 @@ async function buildEntitiesFromCSV() {
         ? String(r[idxCustomerName]).trim()
         : `Site ${customerId}`;
 
+    // ✅ NEW: read population
+    const population =
+      idxPopulation !== -1 ? (toNum(r[idxPopulation]) ?? 0) : 0;
+
     const prev = bestByCustomer.get(customerId);
 
     if (!prev) {
-      bestByCustomer.set(customerId, { name, year, coord });
+      bestByCustomer.set(customerId, { name, year, coord, population }); // ✅ NEW
       continue;
     }
 
     // choose newest year (or first if no year)
     if (year != null && (prev.year == null || year > prev.year)) {
-      bestByCustomer.set(customerId, { name, year, coord });
+      bestByCustomer.set(customerId, { name, year, coord, population }); // ✅ NEW
     }
   }
 
@@ -412,6 +412,12 @@ async function buildEntitiesFromCSV() {
     const entity = viewer.entities.add({
       name: item.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
+
+      // ✅ NEW: store population on entity for clustering + UI
+      properties: {
+        population: item.population,
+        customerId: customerId,
+      },
 
       point: {
         pixelSize: 4,
@@ -446,26 +452,113 @@ async function buildEntitiesFromCSV() {
     });
 
     entities.push(entity);
-    siteItems.push({ name: item.name, customerId, lat, lon, entity });
+
+    // ✅ NEW: keep population in siteItems too
+    siteItems.push({
+      name: item.name,
+      customerId,
+      lat,
+      lon,
+      population: item.population,
+      entity,
+    });
   }
 
   console.log(`Loaded ${entities.length} unique sites from ${CSV_URL}`);
+}
 
-  // ✅ Auto-start the tour AFTER points exist
-  // (If your init() already starts it, this won’t hurt, but it may double-start
-  // if your init also calls runTourGuarded. If that happens, delete ONE of them.)
-  if (entities.length > 0) {
-    // If your project uses the guarded tour:
-    if (typeof runTourGuarded === "function") {
-      autoAdvance = true;
-      runTourGuarded();
-    } else if (typeof runTour === "function") {
-      // fallback for older builds
-      autoAdvance = true;
-      runTour();
+
+// =============================================================
+// POPULATION CLUSTERING (zoom-out = combined bubble with summed population)
+// Put this block AFTER buildEntitiesFromCSV() is defined,
+// and BEFORE init() runs (or call setupPopulationClustering() inside init()
+// right after buildEntitiesFromCSV()).
+//
+// What it does:
+// - Creates a CustomDataSource so Cesium's built-in clustering works
+// - Copies your entities into that data source
+// - When clustered, sums entity.properties.population
+// - Shows a single "bubble" label with the summed population
+//
+// NOTE:
+// This is "combine when zoomed out" automatically.
+// When you zoom in, clusters naturally split back into the original points.
+// =============================================================
+
+const popSource = new Cesium.CustomDataSource("populationSites");
+
+// clustering knobs
+const CLUSTER_PIXEL_RANGE = 55;      // how close points must be (in screen px) to cluster
+const CLUSTER_MIN_SIZE = 2;          // minimum points to form a cluster
+const SHOW_POP_LABEL_OVER = 0;       // 0 = always show pop label on cluster
+
+function fmtInt(n) {
+  const x = Math.round(Number(n) || 0);
+  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function setupPopulationClustering() {
+  // 1) enable clustering
+  popSource.clustering.enabled = true;
+  popSource.clustering.pixelRange = CLUSTER_PIXEL_RANGE;
+  popSource.clustering.minimumClusterSize = CLUSTER_MIN_SIZE;
+
+  // 2) cluster styling + population sum
+  //    This event fires every time clustering recomputes (zoom/pan)
+  popSource.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
+    // Sum populations from original entities
+    let totalPop = 0;
+    for (const e of clusteredEntities) {
+      const p = e.properties && e.properties.population
+        ? e.properties.population.getValue()
+        : 0;
+      totalPop += Number(p) || 0;
     }
+
+    // Hide default pin + show a "bubble"
+    cluster.billboard.show = true;
+    cluster.billboard.image = undefined; // keep Cesium's default cluster icon unless you set your own
+    cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+
+    // Label with summed population
+    cluster.label.show = totalPop > SHOW_POP_LABEL_OVER;
+    cluster.label.text = fmtInt(totalPop);
+    cluster.label.font = "bold 18px sans-serif";
+    cluster.label.fillColor = Cesium.Color.WHITE;
+    cluster.label.outlineColor = Cesium.Color.BLACK;
+    cluster.label.outlineWidth = 5;
+    cluster.label.showBackground = true;
+    cluster.label.backgroundColor = new Cesium.Color(0, 0, 0, 0.55);
+
+    // Optional: scale bubble by population (subtle)
+    // (Cesium's default cluster billboard has a size; scale it a bit)
+    const scale = Cesium.Math.clamp(0.9 + Math.log10(Math.max(totalPop, 10)) * 0.15, 0.9, 2.2);
+    cluster.billboard.scale = scale;
+
+    // Optional: store total on the cluster for click handlers later
+    cluster.properties = cluster.properties || new Cesium.PropertyBag();
+    cluster.properties.population = totalPop;
+  });
+
+  // 3) add data source to viewer
+  viewer.dataSources.add(popSource);
+}
+
+/**
+ * Move your points from viewer.entities into popSource.entities
+ * so clustering can manage them.
+ *
+ * Call this AFTER buildEntitiesFromCSV() finishes creating entities[].
+ */
+function moveEntitiesIntoPopulationSource() {
+  // Remove from viewer.entities, add to popSource
+  for (const e of entities) {
+    // Keep your original entity object; just relocate it
+    viewer.entities.remove(e);
+    popSource.entities.add(e);
   }
 }
+
 
 // =============================================================
 // SIDEBAR UI
@@ -807,7 +900,9 @@ function updateTourButton() {
 // START
 // =============================================================
 (async function init() {
-  await buildEntitiesFromCSV();
+  setupPopulationClustering();          // ✅ turn clustering on
+  await buildEntitiesFromCSV();         // ✅ load/create entities[]
+  moveEntitiesIntoPopulationSource();   // ✅ put entities into popSource so clustering can see them
 
   wireSearchBox();
   renderSiteList();
