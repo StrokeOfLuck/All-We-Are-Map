@@ -1,3 +1,13 @@
+// =============================================================
+// FULL WORKING SCRIPT (no clustering yet)
+// - Loads CSV
+// - Keeps ONLY rows where: "Is this row the latest year for that customer?" == TRUE
+// - Uses "Population (Latest Year Only)" to:
+//    - size the circle point
+//    - show the population number as the label
+// - Keeps your tour + sidebar + shortcuts
+// =============================================================
+
 // -------------------------------
 // Cesium: no ion tokens needed
 // -------------------------------
@@ -16,7 +26,7 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   terrainProvider: new Cesium.EllipsoidTerrainProvider(),
 });
 
-// ✅ Sharp labels/billboards on high-DPI screens (must be AFTER viewer is created)
+// Sharp labels/billboards on high-DPI screens
 viewer.resolutionScale = window.devicePixelRatio;
 
 // Canvas reference + keyboard focus
@@ -27,18 +37,6 @@ canvas.focus();
 // -------------------------------
 // Basemap (pick ONE)
 // -------------------------------
-
-/*
-// FREE backup basemap (no tokens)
-viewer.imageryLayers.addImageryProvider(
-  new Cesium.UrlTemplateImageryProvider({
-    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-    subdomains: ["a", "b", "c"],
-    credit: "OpenTopoMap",
-  })
-);
-*/
-
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -51,13 +49,13 @@ viewer.imageryLayers.addImageryProvider(
 // =============================================================
 
 // Camera distances
-const overviewRangeMeters = 1300000; // how far OUT between sites
-const siteRangeMeters = 1200; // how close IN at the site
+const overviewRangeMeters = 1300000;
+const siteRangeMeters = 1200;
 
 // Travel behavior
-const travelSeconds = 1.5; // "move above next site" + "zoom out"
-const zoomInSeconds = 2.0; // zooming down flat
-const tiltSeconds = 1.6; // tilt into orbit pitch
+const travelSeconds = 1.5;
+const zoomInSeconds = 2.0;
+const tiltSeconds = 1.6;
 
 // Orbit behavior (ONLY while holding at the site)
 const orbitPitchDeg = -45;
@@ -75,7 +73,7 @@ let autoAdvance = true;
 // DATA + STATE
 // =============================================================
 const entities = [];
-const siteItems = []; // { name, customerId, lat, lon, entity }
+const siteItems = []; // { name, customerId, lat, lon, population, entity }
 
 let activeIndex = 0;
 let orbit = false;
@@ -99,7 +97,17 @@ function setActiveIndexFromEntity(entity) {
   if (idx !== -1) activeIndex = idx;
 }
 
-// HARD unlock (breaks Cesium lookAt lock in Chrome)
+// Prevent multiple tour loops from stacking
+let tourRunId = 0;
+
+function updateTourButton() {
+  const btn = document.getElementById("fcTourBtn");
+  if (!btn) return;
+  btn.textContent = autoAdvance ? "❚❚" : "▶";
+  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
+}
+
+// HARD unlock (breaks Cesium lookAt lock)
 function hardUnlockCamera() {
   autoAdvance = false;
   orbit = false;
@@ -114,7 +122,6 @@ function hardUnlockCamera() {
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
 
-  // ✅ keep UI in sync
   updateTourButton();
 }
 
@@ -208,7 +215,6 @@ viewer.clock.onTick.addEventListener(() => {
 
   headingDeg += orbitSpeedDegPerSec * dt;
 
-  // Orbit uses lookAt, which "locks" camera unless we hardUnlock on user input
   viewer.camera.lookAt(
     getActiveSitePosition(),
     new Cesium.HeadingPitchRange(
@@ -220,45 +226,54 @@ viewer.clock.onTick.addEventListener(() => {
 });
 
 // =============================================================
-// TOUR LOOP
+// TOUR LOOP (guarded)
 // =============================================================
-async function runTour() {
-  while (autoAdvance) {
+async function runTourGuarded() {
+  const myId = ++tourRunId;
+
+  while (autoAdvance && myId === tourRunId) {
     await goAboveSiteFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     await zoomDownFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     await tiltIntoOrbitPitch();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     headingDeg = 0;
     orbit = true;
     await sleep(holdSeconds * 1000);
+    if (!autoAdvance || myId !== tourRunId) break;
 
     orbit = false;
     await tiltBackToFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     await goAboveSiteFlat();
-    if (!autoAdvance) break;
+    if (!autoAdvance || myId !== tourRunId) break;
 
     activeIndex = (activeIndex + 1) % entities.length;
   }
 }
 
+function toggleAutoTour() {
+  autoAdvance = !autoAdvance;
+
+  if (autoAdvance) {
+    if (entities.length > 0) runTourGuarded();
+  } else {
+    orbit = false;
+    tourRunId++;
+  }
+
+  updateTourButton();
+}
 
 // =============================================================
-// CSV LOADING (no dependencies)
-// CSV format:
-// - "Coordinates" is "LAT, LON" (backwards for Cesium)
-// - Cesium needs fromDegrees(LON, LAT)
-// Dedupe: keep latest Year per Customer ID with valid coordinates
-//
-// ✅ Important:
-// - This block does NOT move the camera (no zoomTo / flyTo).
-// - It CAN optionally auto-start the tour once points exist.
+// CSV LOADING (simple + reliable)
+// Only plot rows where latest-year flag is TRUE
+// Point size + label = Population (Latest Year Only)
 // =============================================================
 
 // ---------- CSV parser ----------
@@ -277,18 +292,15 @@ function parseCSV(text) {
       i++;
       continue;
     }
-
     if (ch === '"') {
       inQuotes = !inQuotes;
       continue;
     }
-
     if (ch === "," && !inQuotes) {
       row.push(cur);
       cur = "";
       continue;
     }
-
     if ((ch === "\n" || ch === "\r") && !inQuotes) {
       if (ch === "\r" && next === "\n") i++;
       row.push(cur);
@@ -297,27 +309,25 @@ function parseCSV(text) {
       row = [];
       continue;
     }
-
     cur += ch;
   }
 
   row.push(cur);
   if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-
   return rows;
 }
 
-// ---------- helpers ----------
 function toNum(x) {
   if (x == null) return null;
-  const s = String(x)
-    .replace(/\u00A0/g, " ")
-    .trim()
-    .replace(/,/g, ""); // allow "1,234.56"
+  const s = String(x).replace(/\u00A0/g, " ").trim().replace(/,/g, "");
   if (!s) return null;
-
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+function parseBool(x) {
+  const s = String(x ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y";
 }
 
 function parseCoordinatesLatLon(coordStr) {
@@ -337,10 +347,23 @@ function parseCoordinatesLatLon(coordStr) {
   return { lat, lon };
 }
 
-// ---------- loader ----------
+function fmtInt(n) {
+  const x = Math.round(Number(n) || 0);
+  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+
+function popToPixelSize(pop) {
+  const p = Math.max(0, Number(pop) || 0);
+  const size = 6 + Math.log10(Math.max(p, 1)) * 6;
+  return clamp(size, 6, 34);
+}
+
 async function buildEntitiesFromCSV() {
-  // ✅ Use your actual file name if you changed it in the repo
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv"; // must match your repo file exactly
 
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
@@ -350,7 +373,6 @@ async function buildEntitiesFromCSV() {
 
   const text = await res.text();
   const rows = parseCSV(text);
-
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
     return;
@@ -360,27 +382,47 @@ async function buildEntitiesFromCSV() {
     String(h).replace("\ufeff", "").trim().toLowerCase()
   );
 
+  const idxCoordinates = headers.indexOf("coordinates");
+  const idxLatestFlag = headers.indexOf("is this row the latest year for that customer?");
+  const idxPopLatest = headers.indexOf("population (latest year only)");
+
   const idxCustomerId = headers.indexOf("customer id");
   const idxCustomerName = headers.indexOf("customer name");
-  const idxYear = headers.indexOf("year");
-  const idxCoordinates = headers.indexOf("coordinates");
 
   if (idxCoordinates === -1) {
     console.error('CSV missing required column: "Coordinates"');
     console.log("Headers found:", headers);
     return;
   }
+  if (idxLatestFlag === -1) {
+    console.error('CSV missing required column: "Is this row the latest year for that customer?"');
+    console.log("Headers found:", headers);
+    return;
+  }
+  if (idxPopLatest === -1) {
+    console.error('CSV missing required column: "Population (Latest Year Only)"');
+    console.log("Headers found:", headers);
+    return;
+  }
 
-  // keep latest Year per Customer ID
-  const bestByCustomer = new Map();
+  // Clear old stuff
+  viewer.entities.removeAll();
+  entities.length = 0;
+  siteItems.length = 0;
+
+  let kept = 0;
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
 
+    const isLatest = parseBool(r[idxLatestFlag]);
+    if (!isLatest) continue;
+
+    const pop = toNum(r[idxPopLatest]) ?? 0;
+    if (pop <= 0) continue;
+
     const coord = parseCoordinatesLatLon(r[idxCoordinates]);
     if (!coord) continue;
-
-    const year = idxYear !== -1 ? toNum(r[idxYear]) : null;
 
     const customerId =
       idxCustomerId !== -1 && String(r[idxCustomerId]).trim()
@@ -392,36 +434,27 @@ async function buildEntitiesFromCSV() {
         ? String(r[idxCustomerName]).trim()
         : `Site ${customerId}`;
 
-    const prev = bestByCustomer.get(customerId);
-
-    if (!prev) {
-      bestByCustomer.set(customerId, { name, year, coord });
-      continue;
-    }
-
-    // choose newest year (or first if no year)
-    if (year != null && (prev.year == null || year > prev.year)) {
-      bestByCustomer.set(customerId, { name, year, coord });
-    }
-  }
-
-  // build entities
-  for (const [customerId, item] of bestByCustomer.entries()) {
-    const { lat, lon } = item.coord;
+    const { lat, lon } = coord;
 
     const entity = viewer.entities.add({
-      name: item.name,
+      name: name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
+      properties: {
+        population: pop,
+        customerId: customerId,
+        isLatestYear: true,
+      },
+
       point: {
-        pixelSize: 4,
+        pixelSize: popToPixelSize(pop),
         color: Cesium.Color.YELLOW,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2.0e7),
       },
 
+      // If you suspect icon path problems, comment this billboard block out.
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -432,39 +465,25 @@ async function buildEntitiesFromCSV() {
       },
 
       label: {
-        text: item.name,
-        font: "20px sans-serif",
+        text: fmtInt(pop),
+        font: "bold 18px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 4,
+        outlineWidth: 5,
         showBackground: true,
-        backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
-        pixelOffset: new Cesium.Cartesian2(0, -36),
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+        pixelOffset: new Cesium.Cartesian2(0, -34),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
       },
     });
 
     entities.push(entity);
-    siteItems.push({ name: item.name, customerId, lat, lon, entity });
+    siteItems.push({ name, customerId, lat, lon, population: pop, entity });
+    kept++;
   }
 
-  console.log(`Loaded ${entities.length} unique sites from ${CSV_URL}`);
-
-  // ✅ Auto-start the tour AFTER points exist
-  // (If your init() already starts it, this won’t hurt, but it may double-start
-  // if your init also calls runTourGuarded. If that happens, delete ONE of them.)
-  if (entities.length > 0) {
-    // If your project uses the guarded tour:
-    if (typeof runTourGuarded === "function") {
-      autoAdvance = true;
-      runTourGuarded();
-    } else if (typeof runTour === "function") {
-      // fallback for older builds
-      autoAdvance = true;
-      runTour();
-    }
-  }
+  console.log(`Loaded ${kept} latest-year sites with population from ${CSV_URL}`);
 }
 
 // =============================================================
@@ -473,12 +492,11 @@ async function buildEntitiesFromCSV() {
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
-  tourRunId++;          // stop any running tour loop
+  tourRunId++;
   updateTourButton();
 
   setActiveIndexFromEntity(entity);
 
-  // Make sure camera is not locked
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
@@ -515,8 +533,9 @@ function renderSiteList(filterText = "") {
     row.innerHTML = `
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
+      <div class="siteSub">Pop: ${fmtInt(s.population)}</div>
     `;
-    
+
     row.addEventListener("click", (e) => {
       e.stopPropagation();
       flyToSite(s.entity);
@@ -533,10 +552,8 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// CHROME-SAFE DOUBLE CLICK (uses LEFT_CLICK timing)
+// CHROME-SAFE DOUBLE CLICK
 // =============================================================
-
-// Disable Cesium default dblclick zoom (optional)
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
 );
@@ -557,9 +574,9 @@ safeClickHandler.setInputAction((movement) => {
 
   flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
 // =============================================================
-// CHROME HARD-UNLOCK (DOM capture phase)
-// Makes click+drag ALWAYS break orbit/tour in Chrome.
+// HARD UNLOCK ON USER INPUT
 // =============================================================
 canvas.addEventListener(
   "pointerdown",
@@ -589,8 +606,7 @@ canvas.addEventListener(
 );
 
 // =============================================================
-// KEYBOARD SHORTCUTS (capture mode so UI can't swallow them)
-// - Allows typing in search normally, except shortcut keys.
+// KEYBOARD SHORTCUTS
 // =============================================================
 window.addEventListener(
   "keydown",
@@ -601,10 +617,8 @@ window.addEventListener(
     const k = e.key.toLowerCase();
     const isShortcut = k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
 
-    // Let typing work in search box unless it's a shortcut
     if (isSearch && !isShortcut) return;
 
-    // If shortcut pressed while search focused, blur search and re-focus canvas
     if (isSearch && isShortcut) {
       active.blur();
       canvas.focus();
@@ -664,9 +678,7 @@ window.addEventListener(
       orbit = false;
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
-      autoAdvance = !autoAdvance;
-      if (autoAdvance) runTour();
-
+      toggleAutoTour();
       e.preventDefault();
       return;
     }
@@ -674,74 +686,15 @@ window.addEventListener(
   true
 );
 
-
 // =============================================================
-// Floating controls: menu + tour toggle + restart
+// Floating controls: menu + tour toggle
 // =============================================================
-
-// Prevent multiple tour loops from stacking
-let tourRunId = 0;
-
-async function runTourGuarded() {
-  const myId = ++tourRunId;
-
-  // runTour() is your existing loop. We just guard against stale runs.
-  while (autoAdvance && myId === tourRunId) {
-    await goAboveSiteFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    await zoomDownFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    await tiltIntoOrbitPitch();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    headingDeg = 0;
-    orbit = true;
-    await sleep(holdSeconds * 1000);
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    orbit = false;
-    await tiltBackToFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    await goAboveSiteFlat();
-    if (!autoAdvance || myId !== tourRunId) break;
-
-    activeIndex = (activeIndex + 1) % entities.length;
-  }
-}
-
-
-function toggleAutoTour() {
-  autoAdvance = !autoAdvance;
-
-  if (autoAdvance) {
-    // kick off tour if turning on
-    if (entities.length > 0) runTourGuarded();
-  } else {
-    orbit = false;
-    tourRunId++; // invalidate current run
-  }
-
-  updateTourButton();
-}
-
-function updateTourButton() {
-  const btn = document.getElementById("fcTourBtn");
-  if (!btn) return;
-
-  // ⏸ when running, ▶ when paused
-  btn.textContent = autoAdvance ? "❚❚" : "▶";
-  btn.setAttribute("aria-label", autoAdvance ? "Pause auto tour" : "Start auto tour");
-}
-
 (function wireFloatingControls() {
   const sidebar = document.getElementById("sidebar");
   const menuBtn = document.getElementById("fcMenuBtn");
   const tourBtn = document.getElementById("fcTourBtn");
 
-  if (!sidebar || !menuBtn || !tourBtn ) return;
+  if (!sidebar || !menuBtn || !tourBtn) return;
 
   const mqMobile = window.matchMedia("(max-width: 768px)");
 
@@ -749,15 +702,14 @@ function updateTourButton() {
     return sidebar.classList.contains("sidebarClosed");
   }
 
-  function applyInitialSidebarState() {
-    // Start CLOSED on all devices
-    sidebar.classList.add("sidebarClosed");
-    updateMenuButton();
-  }
   function updateMenuButton() {
-    // show ☰ when closed, ✕ when open
     menuBtn.textContent = isClosed() ? "☰" : "✕";
     menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
+  }
+
+  function applyInitialSidebarState() {
+    sidebar.classList.add("sidebarClosed");
+    updateMenuButton();
   }
 
   function toggleMenu() {
@@ -765,23 +717,19 @@ function updateTourButton() {
     updateMenuButton();
   }
 
-  // menu button always visible
   menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleMenu();
   });
 
-  // tour buttons always visible
   tourBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleAutoTour();
   });
 
-  // keep sidebar clicks from hitting the map
   sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
   sidebar.addEventListener("click", (e) => e.stopPropagation());
 
-  // re-apply open/closed rule on rotate/resize
   if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
   else window.addEventListener("resize", applyInitialSidebarState);
 
@@ -790,7 +738,7 @@ function updateTourButton() {
 })();
 
 // =============================================================
-// Help box close button (X) - runs once
+// Help box close button
 // =============================================================
 (function wireHelpCloseButton() {
   const help = document.getElementById("controlsHelp");
@@ -813,9 +761,14 @@ function updateTourButton() {
   renderSiteList();
 
   if (entities.length === 0) {
-    console.warn("No sites loaded from sites.csv; tour not started.");
+    console.warn("No latest-year sites loaded; nothing to show.");
     return;
   }
 
+  // Ensure you SEE the points immediately
+  viewer.zoomTo(viewer.entities);
+
+  // Start tour
+  autoAdvance = true;
   runTourGuarded();
 })();
