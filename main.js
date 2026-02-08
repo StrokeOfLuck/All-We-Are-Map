@@ -449,7 +449,7 @@ async function buildEntitiesFromCSV() {
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 250_000),
         scaleByDistance: new Cesium.NearFarScalar(10_000.0, 1.0, 2_000_000.0, 0.0),
-        distanceDisplayCondition: undefined, // remove hard cutoff
+        
       },
     });
 
