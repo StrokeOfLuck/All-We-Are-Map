@@ -1,9 +1,8 @@
 // =============================================================
 // FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
 // + CLUSTERING (merge/split) with "big bubble -> splits -> splits"
-// + Cluster bubble TEXT = summed population (CENTERED INSIDE the circle)
-// + Cluster text scales with bubble size (so it "reacts" visually)
-// + Individual sites keep CUSTOMER NAME from CSV + population label
+// + Cluster bubble CENTER TEXT (population + site count) visible from FAR away
+// + Individual sites keep CUSTOMER NAME from CSV + population label (near only)
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -34,8 +33,8 @@ viewer.imageryLayers.addImageryProvider(
 // =============================================================
 // KNOBS
 // =============================================================
-const overviewRangeMeters = 1_300_000;
-const siteRangeMeters = 1_200;
+const overviewRangeMeters = 1300000;
+const siteRangeMeters = 1200;
 
 const travelSeconds = 1.5;
 const zoomInSeconds = 2.0;
@@ -54,24 +53,25 @@ let autoAdvance = true;
 const clusterPixelRange = 95; // bigger = more merging (bigger bubbles)
 const clusterMinSize = 2;
 
-// ---- Fade knobs ----
-const labelNear = 20_000;
-const labelFar = 240_000;
-const labelFarAlpha = 0.05;
+// ---- Site label fade (avoid "hard pop") ----
+const siteLabelNear = 2_000;     // show site labels when you're fairly close
+const siteLabelFar  = 250_000;   // fade out by this distance
+const siteLabelFarAlpha = 0.0;
+
+// ---- Cluster center text visibility (ITS OWN THING) ----
+const clusterTextNear = 10_000;      // full opacity
+const clusterTextFar  = 10_000_000;  // still visible very far out
+const clusterTextFarAlpha = 0.85;    // keep visible, not fading to 0
 
 // ---- Cluster bubble sizing (SNAPPED so it doesn't "smoothly grow") ----
 const clusterSizeBuckets = [18, 26, 34, 44, 56, 70, 86, 104];
 
-// Choose what drives cluster size:
-// true => based on summed population (log scale)
-// false => based on count only (still shows population text)
+// true => cluster size uses summed population (log)
+// false => cluster size uses count
 const clusterSizeByPopulation = true;
 
-// Show site count as second line inside bubble?
-const showClusterSiteCount = false;
-
-// Hide cluster number when bubble is too small (prevents cramped text)
-const minClusterBubbleForText = 26;
+// show "Sites: N" as second line
+const showClusterSiteCount = true;
 
 // =============================================================
 // DATA + STATE
@@ -361,24 +361,14 @@ function pickBucketSize(rawSize) {
   return pixelSize;
 }
 
-// Make text size react to bubble size
+// Cluster font reacts to bubble size (bigger bubble -> bigger text)
 function clusterFontForBubble(pixelSize) {
-  // bubble ~18..104 => font ~11..22
-  const t = (pixelSize - 18) / (104 - 18);
-  const px = Math.round(clamp(11 + t * 11, 11, 22));
-  return `bold ${px}px sans-serif`;
-}
-
-function clusterScaleForBubble(pixelSize) {
-  // optional extra scaling (usually 1 is fine)
-  const t = (pixelSize - 18) / (104 - 18);
-  return clamp(0.95 + t * 0.25, 0.95, 1.2);
+  const s = clamp(Math.round(pixelSize * 0.33), 12, 28);
+  return `bold ${s}px sans-serif`;
 }
 
 // =============================================================
-// CLUSTER EVENT
-// - We render the bubble as a POINT
-// - We render POPULATION as a LABEL centered inside the bubble
+// CLUSTER EVENT (bubble + CENTER TEXT that is independent)
 // =============================================================
 sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
   const now = Cesium.JulianDate.now();
@@ -390,7 +380,7 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
     if (Number.isFinite(p)) sumPop += p;
   }
 
-  // Drive bubble size
+  // Bubble size driver
   let rawSize;
   if (clusterSizeByPopulation) {
     rawSize = 16 + Math.log10(Math.max(sumPop, 1)) * 18;
@@ -399,59 +389,53 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
     rawSize = 18 + Math.sqrt(n) * 12;
   }
 
-  // SNAP size buckets so it "splits" rather than smoothly growing
+  // SNAPPED bucket size so it "splits" instead of smoothly growing
   const pixelSize = pickBucketSize(rawSize);
 
-  // Bubble point
+  // Hide billboard, show point bubble
   cluster.billboard.show = false;
 
   cluster.point.show = true;
   cluster.point.pixelSize = pixelSize;
-  cluster.point.color = Cesium.Color.YELLOW.withAlpha(0.85);
+  cluster.point.color = Cesium.Color.YELLOW.withAlpha(0.88);
   cluster.point.outlineColor = Cesium.Color.BLACK;
   cluster.point.outlineWidth = 2;
   cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-  // Center text INSIDE bubble (this is the "separate population number")
-  const showText = pixelSize >= minClusterBubbleForText;
+  // === CENTER TEXT: its own thing (not tied to site label rules) ===
+  cluster.label.show = true;
 
-  cluster.label.show = showText;
+  const popLine = `Pop: ${fmtInt(sumPop)}`;
+  const countLine = showClusterSiteCount ? `\nSites: ${clusteredEntities.length}` : "";
+  cluster.label.text = `${popLine}${countLine}`;
 
-  if (showText) {
-    const popLine = fmtInt(sumPop);
-    const countLine = showClusterSiteCount ? `\n${clusteredEntities.length}` : "";
-    cluster.label.text = `${popLine}${countLine}`;
+  // Hard center (kills "above bubble" behavior)
+  cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+  cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+  cluster.label.pixelOffset = Cesium.Cartesian2.ZERO;
+  cluster.label.eyeOffset = Cesium.Cartesian3.ZERO;
+  cluster.label.heightReference = Cesium.HeightReference.NONE;
+  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-    // Make the text react to bubble size
-    cluster.label.font = clusterFontForBubble(pixelSize);
-    cluster.label.scale = clusterScaleForBubble(pixelSize);
+  // Styling
+  cluster.label.showBackground = false;
+  cluster.label.font = clusterFontForBubble(pixelSize);
+  cluster.label.fillColor = Cesium.Color.BLACK;
+  cluster.label.outlineWidth = 0;
 
-    // readable on yellow
-    cluster.label.fillColor = Cesium.Color.BLACK;
-    cluster.label.outlineColor = Cesium.Color.BLACK.withAlpha(0.0);
-    cluster.label.outlineWidth = 0;
-
-    // Perfect center
-    cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-    cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
-    cluster.label.pixelOffset = Cesium.Cartesian2.ZERO;
-
-    cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-    // Optional distance fade (keeps it from "popping")
-    cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
-      labelNear,
-      1.0,
-      labelFar,
-      labelFarAlpha
-    );
-    cluster.label.scaleByDistance = new Cesium.NearFarScalar(
-      labelNear,
-      clusterScaleForBubble(pixelSize),
-      labelFar,
-      labelFarAlpha
-    );
-  }
+  // Visible FAR AWAY (separate from site label fade)
+  cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
+    clusterTextNear,
+    1.0,
+    clusterTextFar,
+    clusterTextFarAlpha
+  );
+  cluster.label.scaleByDistance = new Cesium.NearFarScalar(
+    clusterTextNear,
+    1.0,
+    clusterTextFar,
+    1.0
+  );
 });
 
 // =============================================================
@@ -564,28 +548,16 @@ async function buildEntitiesFromCSV() {
 
   // PASS 4: Add entities (installed + coords + pop)
   let plotted = 0;
-  let missingCustomer = 0;
-  let missingCoords = 0;
-  let missingPop = 0;
 
   for (const id of installedIds) {
     const cust = customerById.get(id);
-    if (!cust) {
-      missingCustomer++;
-      continue;
-    }
+    if (!cust) continue;
 
     const coord = coordsByLocId.get(cust.locId);
-    if (!coord) {
-      missingCoords++;
-      continue;
-    }
+    if (!coord) continue;
 
     const popRec = popById.get(id);
-    if (!popRec || popRec.pop == null) {
-      missingPop++;
-      continue;
-    }
+    if (!popRec || popRec.pop == null) continue;
 
     const pop = popRec.pop;
     if (pop <= 0) continue;
@@ -624,7 +596,7 @@ async function buildEntitiesFromCSV() {
         scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
-      // Individual label: name + pop
+      // Individual site label (near only)
       label: {
         text: `${customerName}\nPopulation served: ${fmtInt(pop)}`,
         font: "bold 18px sans-serif",
@@ -635,8 +607,9 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
         pixelOffset: new Cesium.Cartesian2(0, -55),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        translucencyByDistance: new Cesium.NearFarScalar(labelNear, 1.0, labelFar, labelFarAlpha),
-        scaleByDistance: new Cesium.NearFarScalar(labelNear, 1.0, labelFar, labelFarAlpha),
+
+        translucencyByDistance: new Cesium.NearFarScalar(siteLabelNear, 1.0, siteLabelFar, siteLabelFarAlpha),
+        scaleByDistance: new Cesium.NearFarScalar(siteLabelNear, 1.0, siteLabelFar, siteLabelFarAlpha),
       },
     });
 
@@ -654,9 +627,6 @@ async function buildEntitiesFromCSV() {
   }
 
   console.log("Plotted installed sites:", plotted);
-  console.log("Missing customer row:", missingCustomer);
-  console.log("Missing coords:", missingCoords);
-  console.log("Missing population:", missingPop);
 
   // Force recluster now that we loaded data
   sitesDS.clustering.enabled = false;
@@ -869,7 +839,7 @@ window.addEventListener(
 );
 
 // =============================================================
-// Floating controls
+// Floating controls (expects your existing HTML buttons/side bar)
 // =============================================================
 (function wireFloatingControls() {
   const sidebar = document.getElementById("sidebar");
