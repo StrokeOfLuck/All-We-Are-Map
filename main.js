@@ -70,7 +70,7 @@ const noClusterAtOrBelowMeters = 5000;
 
 // “Full strength” merge value when zoomed out
 // Bigger = clusters merge sooner/more (helps prevent “two bubbles side-by-side”)
-const clusterPixelRangeFar = 140; // <-- YOU TUNE THIS (try 120–200)
+const clusterPixelRangeFar = 200; // <-- YOU TUNE THIS (try 120–200)
 
 // Minimum cluster size
 const clusterMinSize = 2;
