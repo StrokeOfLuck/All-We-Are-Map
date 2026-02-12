@@ -78,7 +78,7 @@ const clusterMinSize = 2;
 // Smooth ramp region (so merge feels nicer and happens earlier)
 // height <= noClusterAtOrBelowMeters: OFF
 // height >= clusterRangeFarMeters: ON at full clusterPixelRangeFar
-const maxpixel= noClusterAtOrBelowMeters;     // start ramping on after cutoff
+const maxpixel= 75000;     // start ramping on after cutoff
 const clusterRangeFarMeters  = 250_000;    // reach full merge by this height
 
 // Optional cap so we never go beyond some pixelRange
