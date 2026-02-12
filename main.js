@@ -1,7 +1,8 @@
 // =============================================================
 // FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
 // + CLUSTERING (merge/split) with "big bubble -> splits -> splits"
-// + Cluster bubble TEXT = summed population (and optional site count)
+// + Cluster bubble TEXT = summed population (CENTERED INSIDE the circle)
+// + Cluster text scales with bubble size (so it "reacts" visually)
 // + Individual sites keep CUSTOMER NAME from CSV + population label
 // =============================================================
 
@@ -33,8 +34,8 @@ viewer.imageryLayers.addImageryProvider(
 // =============================================================
 // KNOBS
 // =============================================================
-const overviewRangeMeters = 1300000;
-const siteRangeMeters = 1200;
+const overviewRangeMeters = 1_300_000;
+const siteRangeMeters = 1_200;
 
 const travelSeconds = 1.5;
 const zoomInSeconds = 2.0;
@@ -53,7 +54,7 @@ let autoAdvance = true;
 const clusterPixelRange = 95; // bigger = more merging (bigger bubbles)
 const clusterMinSize = 2;
 
-// ---- Fade knobs (avoid "hard pop") ----
+// ---- Fade knobs ----
 const labelNear = 20_000;
 const labelFar = 240_000;
 const labelFarAlpha = 0.05;
@@ -68,6 +69,9 @@ const clusterSizeByPopulation = true;
 
 // Show site count as second line inside bubble?
 const showClusterSiteCount = false;
+
+// Hide cluster number when bubble is too small (prevents cramped text)
+const minClusterBubbleForText = 26;
 
 // =============================================================
 // DATA + STATE
@@ -357,13 +361,29 @@ function pickBucketSize(rawSize) {
   return pixelSize;
 }
 
+// Make text size react to bubble size
+function clusterFontForBubble(pixelSize) {
+  // bubble ~18..104 => font ~11..22
+  const t = (pixelSize - 18) / (104 - 18);
+  const px = Math.round(clamp(11 + t * 11, 11, 22));
+  return `bold ${px}px sans-serif`;
+}
+
+function clusterScaleForBubble(pixelSize) {
+  // optional extra scaling (usually 1 is fine)
+  const t = (pixelSize - 18) / (104 - 18);
+  return clamp(0.95 + t * 0.25, 0.95, 1.2);
+}
+
 // =============================================================
-// CLUSTER EVENT (bubble style + POP SUM INSIDE BUBBLE)
+// CLUSTER EVENT
+// - We render the bubble as a POINT
+// - We render POPULATION as a LABEL centered inside the bubble
 // =============================================================
 sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
   const now = Cesium.JulianDate.now();
 
-  // Sum population (and optionally capture a "dominant" name if you ever want)
+  // Sum population
   let sumPop = 0;
   for (const e of clusteredEntities) {
     const p = e.properties?.population?.getValue?.(now);
@@ -382,7 +402,7 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   // SNAP size buckets so it "splits" rather than smoothly growing
   const pixelSize = pickBucketSize(rawSize);
 
-  // Hide billboard, show point bubble
+  // Bubble point
   cluster.billboard.show = false;
 
   cluster.point.show = true;
@@ -392,33 +412,46 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.point.outlineWidth = 2;
   cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-  // Put POP number INSIDE bubble
-  cluster.label.show = true;
+  // Center text INSIDE bubble (this is the "separate population number")
+  const showText = pixelSize >= minClusterBubbleForText;
 
-  const popLine = fmtInt(sumPop);
-  const countLine = showClusterSiteCount ? `\n${clusteredEntities.length} sites` : "";
-  cluster.label.text = `${popLine}${countLine}`;
+  cluster.label.show = showText;
 
-  cluster.label.font = "bold 16px sans-serif";
-  cluster.label.fillColor = Cesium.Color.BLACK; // readable on yellow bubble
-  cluster.label.outlineColor = Cesium.Color.BLACK.withAlpha(0.0);
-  cluster.label.outlineWidth = 0;
+  if (showText) {
+    const popLine = fmtInt(sumPop);
+    const countLine = showClusterSiteCount ? `\n${clusteredEntities.length}` : "";
+    cluster.label.text = `${popLine}${countLine}`;
 
-  // Center text in the bubble
-  cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-  cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
-  cluster.label.pixelOffset = new Cesium.Cartesian2(0, 0);
+    // Make the text react to bubble size
+    cluster.label.font = clusterFontForBubble(pixelSize);
+    cluster.label.scale = clusterScaleForBubble(pixelSize);
 
-  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+    // readable on yellow
+    cluster.label.fillColor = Cesium.Color.BLACK;
+    cluster.label.outlineColor = Cesium.Color.BLACK.withAlpha(0.0);
+    cluster.label.outlineWidth = 0;
 
-  // Gentle fade at distance (optional)
-  cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
-    labelNear,
-    1.0,
-    labelFar,
-    labelFarAlpha
-  );
-  cluster.label.scaleByDistance = new Cesium.NearFarScalar(labelNear, 1.0, labelFar, labelFarAlpha);
+    // Perfect center
+    cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+    cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+    cluster.label.pixelOffset = Cesium.Cartesian2.ZERO;
+
+    cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+    // Optional distance fade (keeps it from "popping")
+    cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
+      labelNear,
+      1.0,
+      labelFar,
+      labelFarAlpha
+    );
+    cluster.label.scaleByDistance = new Cesium.NearFarScalar(
+      labelNear,
+      clusterScaleForBubble(pixelSize),
+      labelFar,
+      labelFarAlpha
+    );
+  }
 });
 
 // =============================================================
@@ -531,22 +564,33 @@ async function buildEntitiesFromCSV() {
 
   // PASS 4: Add entities (installed + coords + pop)
   let plotted = 0;
+  let missingCustomer = 0;
+  let missingCoords = 0;
+  let missingPop = 0;
+
   for (const id of installedIds) {
     const cust = customerById.get(id);
-    if (!cust) continue;
+    if (!cust) {
+      missingCustomer++;
+      continue;
+    }
 
     const coord = coordsByLocId.get(cust.locId);
-    if (!coord) continue;
+    if (!coord) {
+      missingCoords++;
+      continue;
+    }
 
     const popRec = popById.get(id);
-    if (!popRec || popRec.pop == null) continue;
+    if (!popRec || popRec.pop == null) {
+      missingPop++;
+      continue;
+    }
 
     const pop = popRec.pop;
     if (pop <= 0) continue;
 
     const { lat, lon } = coord;
-
-    // IMPORTANT: name from CSV (Customer Name) — avoids "Site:2" style text
     const customerName = cust.name;
 
     const entity = sitesDS.entities.add({
@@ -580,7 +624,7 @@ async function buildEntitiesFromCSV() {
         scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
-      // Individual site label: customer name + pop served
+      // Individual label: name + pop
       label: {
         text: `${customerName}\nPopulation served: ${fmtInt(pop)}`,
         font: "bold 18px sans-serif",
@@ -610,6 +654,9 @@ async function buildEntitiesFromCSV() {
   }
 
   console.log("Plotted installed sites:", plotted);
+  console.log("Missing customer row:", missingCustomer);
+  console.log("Missing coords:", missingCoords);
+  console.log("Missing population:", missingPop);
 
   // Force recluster now that we loaded data
   sitesDS.clustering.enabled = false;
@@ -713,4 +760,181 @@ safeClickHandler.setInputAction((movement) => {
 
 // =============================================================
 // HARD UNLOCK ON USER INPUT
-// ============================================================
+// =============================================================
+canvas.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (e.target !== canvas) return;
+    hardUnlockCamera();
+  },
+  true
+);
+
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    if (e.target !== canvas) return;
+    hardUnlockCamera();
+  },
+  { capture: true, passive: true }
+);
+
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.target !== canvas) return;
+    hardUnlockCamera();
+  },
+  { capture: true, passive: true }
+);
+
+// =============================================================
+// KEYBOARD SHORTCUTS
+// =============================================================
+window.addEventListener(
+  "keydown",
+  async (e) => {
+    const active = document.activeElement;
+    const isSearch = active && active.id === "siteSearch";
+
+    const k = e.key.toLowerCase();
+    const isShortcut = k === "r" || k === "t" || k === "n" || k === "p" || k === "h";
+
+    if (isSearch && !isShortcut) return;
+
+    if (isSearch && isShortcut) {
+      active.blur();
+      canvas.focus();
+    }
+
+    if (k === "h") {
+      const help = document.getElementById("controlsHelp");
+      if (help) help.classList.toggle("controlsHelpHidden");
+      e.preventDefault();
+      return;
+    }
+
+    if (entities.length === 0) return;
+
+    if (k === "r") {
+      autoAdvance = false;
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      await zoomDownFlat();
+      await tiltIntoOrbitPitch();
+      headingDeg = 0;
+      orbit = true;
+
+      e.preventDefault();
+      return;
+    }
+
+    if (k === "n") {
+      autoAdvance = false;
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      activeIndex = (activeIndex + 1) % entities.length;
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+
+      e.preventDefault();
+      return;
+    }
+
+    if (k === "p") {
+      autoAdvance = false;
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      activeIndex = (activeIndex - 1 + entities.length) % entities.length;
+      await goAboveSiteFlat();
+      await zoomDownFlat();
+
+      e.preventDefault();
+      return;
+    }
+
+    if (k === "t") {
+      orbit = false;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      toggleAutoTour();
+      e.preventDefault();
+      return;
+    }
+  },
+  true
+);
+
+// =============================================================
+// Floating controls
+// =============================================================
+(function wireFloatingControls() {
+  const sidebar = document.getElementById("sidebar");
+  const menuBtn = document.getElementById("fcMenuBtn");
+  const tourBtn = document.getElementById("fcTourBtn");
+
+  if (!sidebar || !menuBtn || !tourBtn) return;
+
+  const mqMobile = window.matchMedia("(max-width: 768px)");
+
+  function isClosed() {
+    return sidebar.classList.contains("sidebarClosed");
+  }
+
+  function updateMenuButton() {
+    menuBtn.textContent = isClosed() ? "☰" : "✕";
+    menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
+  }
+
+  function applyInitialSidebarState() {
+    sidebar.classList.add("sidebarClosed");
+    updateMenuButton();
+  }
+
+  function toggleMenu() {
+    sidebar.classList.toggle("sidebarClosed");
+    updateMenuButton();
+  }
+
+  menuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleMenu();
+  });
+
+  tourBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleAutoTour();
+  });
+
+  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
+
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
+  else window.addEventListener("resize", applyInitialSidebarState);
+
+  applyInitialSidebarState();
+  updateTourButton();
+})();
+
+// =============================================================
+// START
+// =============================================================
+(async function init() {
+  await buildEntitiesFromCSV();
+
+  wireSearchBox();
+  renderSiteList();
+
+  if (entities.length === 0) {
+    console.warn("No coordinate sites found to show.");
+    return;
+  }
+
+  viewer.zoomTo(sitesDS.entities);
+
+  autoAdvance = true;
+  runTourGuarded();
+})();
