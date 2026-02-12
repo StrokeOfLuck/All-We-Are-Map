@@ -359,7 +359,7 @@ function findNearestCustomerIdColumn(headers, idxLatestFlag) {
 // =============================================================
 async function buildEntitiesFromCSV() {
   // 👇 change this to your new file name in the repo
-  const CSV_URL = "Impact_Map_Export_3.0 - Sheet1.csv";
+  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
