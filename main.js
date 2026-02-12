@@ -563,7 +563,9 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
         pixelOffset: new Cesium.Cartesian2(0, -40),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 500_000),
+        scaleByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
+        translucencyByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
       },
     });
 
