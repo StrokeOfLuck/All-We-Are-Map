@@ -1,6 +1,7 @@
 // =============================================================
 // FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
-// + CLUSTERING (merge/split) with cluster label showing SUM population
+// + CLUSTERING (merge/split) with "big bubble -> splits -> splits"
+// + Cluster label shows SUM population
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -48,13 +49,20 @@ const flatPitchDeg = -90;
 let autoAdvance = true;
 
 // Clustering knobs
-const clusterPixelRange = 60;      // bigger = more merging
+const clusterPixelRange = 95; // bigger = stays merged longer (more "big bubble")
 const clusterMinSize = 2;
 
 // Label fade knobs (no hard pop)
-const labelNear = 20_000;          // full at/under this (meters)
-const labelFar = 200_000;          // mostly gone by this (meters)
-const labelFarAlpha = 0.02;        // don't use 0.0 (avoids flicker/popping)
+const labelNear = 20_000;
+const labelFar = 220_000;
+const labelFarAlpha = 0.02;
+
+// Cluster bubble sizing (SNAPPED so it doesn't "smoothly grow")
+const clusterSizeBuckets = [18, 26, 34, 44, 56, 70, 86, 104];
+
+// If true, cluster size is based on population sum (log scale).
+// If false, cluster size is based on number of sites.
+const clusterSizeByPopulation = false;
 
 // =============================================================
 // DATA + STATE
@@ -77,50 +85,6 @@ viewer.dataSources.add(sitesDS);
 sitesDS.clustering.enabled = true;
 sitesDS.clustering.pixelRange = clusterPixelRange;
 sitesDS.clustering.minimumClusterSize = clusterMinSize;
-
-// Cluster appearance + label showing SUM population
-sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
-  // Sum population from clustered members
-  let sumPop = 0;
-  for (const e of clusteredEntities) {
-    const p = e.properties?.population?.getValue?.(Cesium.JulianDate.now());
-    if (Number.isFinite(p)) sumPop += p;
-  }
-
-  // Use a simple circle marker for clusters
-  cluster.billboard.show = false;
-
-  cluster.point.show = true;
-  cluster.point.pixelSize = 24;
-  cluster.point.color = Cesium.Color.YELLOW.withAlpha(0.85);
-  cluster.point.outlineColor = Cesium.Color.BLACK;
-  cluster.point.outlineWidth = 2;
-  cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-  // Label shows summed population (and site count)
-  cluster.label.show = true;
-  cluster.label.text =
-    `Pop: ${fmtInt(sumPop)}\nSites: ${clusteredEntities.length}`;
-
-  cluster.label.font = "bold 16px sans-serif";
-  cluster.label.fillColor = Cesium.Color.WHITE;
-  cluster.label.outlineColor = Cesium.Color.BLACK;
-  cluster.label.outlineWidth = 5;
-  cluster.label.showBackground = true;
-  cluster.label.backgroundColor = new Cesium.Color(0, 0, 0, 0.55);
-  cluster.label.pixelOffset = new Cesium.Cartesian2(0, -40);
-  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-
-  // Make cluster label fade with distance too (optional but nice)
-  cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
-    labelNear, 1.0,
-    labelFar, labelFarAlpha
-  );
-  cluster.label.scaleByDistance = new Cesium.NearFarScalar(
-    labelNear, 1.0,
-    labelFar, labelFarAlpha
-  );
-});
 
 // =============================================================
 // HELPERS
@@ -377,6 +341,78 @@ function popToPixelSize(pop) {
   return clamp(size, 6, 34);
 }
 
+function pickBucketSize(rawSize) {
+  let pixelSize = clusterSizeBuckets[clusterSizeBuckets.length - 1];
+  for (const b of clusterSizeBuckets) {
+    if (rawSize <= b) {
+      pixelSize = b;
+      break;
+    }
+  }
+  return pixelSize;
+}
+
+// =============================================================
+// CLUSTER EVENT (bubble style + pop sum label)
+// =============================================================
+sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
+  // Sum population from clustered members
+  let sumPop = 0;
+  for (const e of clusteredEntities) {
+    const p = e.properties?.population?.getValue?.(Cesium.JulianDate.now());
+    if (Number.isFinite(p)) sumPop += p;
+  }
+
+  // Compute raw size driver
+  let rawSize;
+  if (clusterSizeByPopulation) {
+    rawSize = 18 + Math.log10(Math.max(sumPop, 1)) * 14;
+  } else {
+    const n = clusteredEntities.length;
+    rawSize = 18 + Math.sqrt(n) * 12;
+  }
+
+  // SNAP to buckets to avoid "smooth growth"
+  const pixelSize = pickBucketSize(rawSize);
+
+  // Use a simple circle bubble
+  cluster.billboard.show = false;
+
+  cluster.point.show = true;
+  cluster.point.pixelSize = pixelSize;
+  cluster.point.color = Cesium.Color.YELLOW.withAlpha(0.85);
+  cluster.point.outlineColor = Cesium.Color.BLACK;
+  cluster.point.outlineWidth = 2;
+  cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+  // Label shows summed population (and site count)
+  cluster.label.show = true;
+  cluster.label.text = `Pop: ${fmtInt(sumPop)}\nSites: ${clusteredEntities.length}`;
+
+  cluster.label.font = "bold 16px sans-serif";
+  cluster.label.fillColor = Cesium.Color.WHITE;
+  cluster.label.outlineColor = Cesium.Color.BLACK;
+  cluster.label.outlineWidth = 5;
+  cluster.label.showBackground = true;
+  cluster.label.backgroundColor = new Cesium.Color(0, 0, 0, 0.55);
+  cluster.label.pixelOffset = new Cesium.Cartesian2(0, -40);
+  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+  // Fade cluster label when far
+  cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
+    labelNear,
+    1.0,
+    labelFar,
+    labelFarAlpha
+  );
+  cluster.label.scaleByDistance = new Cesium.NearFarScalar(
+    labelNear,
+    1.0,
+    labelFar,
+    labelFarAlpha
+  );
+});
+
 // =============================================================
 // MAIN
 // =============================================================
@@ -398,18 +434,18 @@ async function buildEntitiesFromCSV() {
 
   // New CSV layout (0-based indices)
   const IDX_INST_CUST_ID = 0;  // A
-  const IDX_INST_STATUS  = 4;  // E ("Installed")
+  const IDX_INST_STATUS = 4;   // E ("Installed")
 
-  const IDX_POP_CUST_ID  = 8;  // I
-  const IDX_POP_YEAR     = 9;  // J
-  const IDX_POP_VALUE    = 10; // K
+  const IDX_POP_CUST_ID = 8;   // I
+  const IDX_POP_YEAR = 9;      // J
+  const IDX_POP_VALUE = 10;    // K
 
-  const IDX_LOC_ID       = 14; // O
-  const IDX_LOC_COORDS   = 16; // Q
+  const IDX_LOC_ID = 14;       // O
+  const IDX_LOC_COORDS = 16;   // Q
 
-  const IDX_CUST_ID      = 18; // S
-  const IDX_CUST_NAME    = 19; // T
-  const IDX_CUST_LOC_ID  = 21; // V
+  const IDX_CUST_ID = 18;      // S
+  const IDX_CUST_NAME = 19;    // T
+  const IDX_CUST_LOC_ID = 21;  // V
 
   // Reset
   sitesDS.entities.removeAll();
@@ -420,6 +456,7 @@ async function buildEntitiesFromCSV() {
   const installedIds = new Set();
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
+
     const custIdNum = toNum(row[IDX_INST_CUST_ID]);
     if (custIdNum == null) continue;
 
@@ -485,7 +522,6 @@ async function buildEntitiesFromCSV() {
 
   // PASS 4: Plot installed + coords + pop
   let plotted = 0;
-
   for (const id of installedIds) {
     const cust = customerById.get(id);
     if (!cust) continue;
@@ -514,6 +550,7 @@ async function buildEntitiesFromCSV() {
         locId: cust.locId,
       },
 
+      // Keep your original "dot" (shows when not clustered)
       point: {
         pixelSize: popToPixelSize(pop),
         color: Cesium.Color.YELLOW,
@@ -522,6 +559,7 @@ async function buildEntitiesFromCSV() {
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
 
+      // Keep your pin
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -531,6 +569,7 @@ async function buildEntitiesFromCSV() {
         scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
+      // Site label (fades smoothly, no hard cutoff)
       label: {
         text: labelText,
         font: "bold 18px sans-serif",
@@ -541,8 +580,6 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
         pixelOffset: new Cesium.Cartesian2(0, -55),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-
-        // Smooth fade (no hard cutoff)
         translucencyByDistance: new Cesium.NearFarScalar(labelNear, 1.0, labelFar, labelFarAlpha),
         scaleByDistance: new Cesium.NearFarScalar(labelNear, 1.0, labelFar, labelFarAlpha),
       },
@@ -562,6 +599,10 @@ async function buildEntitiesFromCSV() {
   }
 
   console.log("Plotted installed sites:", plotted);
+
+  // Force recluster after data changes
+  sitesDS.clustering.enabled = false;
+  sitesDS.clustering.enabled = true;
 }
 
 // =============================================================
@@ -768,57 +809,6 @@ window.addEventListener(
   },
   true
 );
-
-// =============================================================
-// Floating controls
-// =============================================================
-(function wireFloatingControls() {
-  const sidebar = document.getElementById("sidebar");
-  const menuBtn = document.getElementById("fcMenuBtn");
-  const tourBtn = document.getElementById("fcTourBtn");
-
-  if (!sidebar || !menuBtn || !tourBtn) return;
-
-  const mqMobile = window.matchMedia("(max-width: 768px)");
-
-  function isClosed() {
-    return sidebar.classList.contains("sidebarClosed");
-  }
-
-  function updateMenuButton() {
-    menuBtn.textContent = isClosed() ? "☰" : "✕";
-    menuBtn.setAttribute("aria-label", isClosed() ? "Open locations menu" : "Close locations menu");
-  }
-
-  function applyInitialSidebarState() {
-    sidebar.classList.add("sidebarClosed");
-    updateMenuButton();
-  }
-
-  function toggleMenu() {
-    sidebar.classList.toggle("sidebarClosed");
-    updateMenuButton();
-  }
-
-  menuBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleMenu();
-  });
-
-  tourBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleAutoTour();
-  });
-
-  sidebar.addEventListener("pointerdown", (e) => e.stopPropagation());
-  sidebar.addEventListener("click", (e) => e.stopPropagation());
-
-  if (mqMobile.addEventListener) mqMobile.addEventListener("change", applyInitialSidebarState);
-  else window.addEventListener("resize", applyInitialSidebarState);
-
-  applyInitialSidebarState();
-  updateTourButton();
-})();
 
 // =============================================================
 // START
