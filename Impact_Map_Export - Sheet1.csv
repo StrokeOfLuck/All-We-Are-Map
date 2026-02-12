@@ -1,0 +1,49 @@
+Customer ID,System ID,System Name,Design Type,Status,Install Date,Duplicate Customer IDs: 5,,Customer ID,Year,Population,Source,"MISSING IDS: 213,215",,Loc ID,District,Coordinates,,Customer ID,Customer Name,Customer Type,Loc ID
+15,19,Little Flower PS/N #1,Lighting Only,Installed,12/9/2017,,,15,2026,511.00,Inferred,,,15,Kalisizo,"-0.534338,31.6254575",,15,Little Flower PS/N,School,15
+16,20,St. Joseph Nkooko SSS #1,Lighting Only,Installed,12/29/2017,,,16,2026,305.00,Inferred,,,16,Nkoko,"0.9614846273101064, 31.428655467144992",,16,St. Joseph Nkooko SSS,School,16
+19,23,Kitimba HC #1,Lighting Only,Installed,11/21/2018,,,19,2026,"9,900.00",Inferred,,,19,Mpigi,"0.29660241578113344, 32.26752448769217",,19,Kitimba HC,Health Centre,19
+21,26,Kisoko SS #1,Lighting Only,Installed,6/4/2018,,,21,2026,738.00,Inferred,,,21,West Budama,"0.7197708749655422, 34.01854492288583",,21,Kisoko SS,School,21
+22,27,Kamugombwa PS #1,Lighting Only,Installed,10/15/2018,,,22,2026,310.00,Inferred,,,22,Mpigi,"0.27866710151157986, 32.27007301282958",,22,Kamugombwa PS,School,22
+24,29,Lukalu PS #1,Lighting Only,Installed,10/15/2018,,,24,2026,843.00,Inferred,,,24,Mpigi,"0.2572615436892138, 32.27786738929855",,24,Lukalu PS,School,24
+25,30,Lukalu SS #1,Lighting Only,Installed,10/15/2018,,,25,2026,701.00,Inferred,,,25,Mpigi,"0.2568425907255054, 32.27777787662353",,25,Lukalu SS,School,25
+26,32,New Hope Vocational Institute VS #1,Lighting Only,Installed,1/16/2019,,,26,2026,73.00,Inferred,,,26,Kaihura,"0.6947444520079005, 30.610227337983165",,26,New Hope Vocational Institute VS,School,26
+30,38,Mpanga UMEA PS #1,Lighting Only,Installed,4/20/2021,,,30,2026,273.00,Inferred,,,30,Butambala,"0.29291343557468547, 32.256133810738355",,30,Mpanga UMEA PS,School,30
+31,70,St. Posiano Lwere PS #1,Lighting Only,Installed,12/11/2021,,,31,2026,241.00,Inferred,,,31,Butambala,"0.28239605366176257, 32.271656082644",,31,St. Posiano Lwere PS,School,31
+32,40,Kakubo UMEA PS #1,Lighting Only,Installed,4/24/2021,,,32,2026,232.00,Inferred,,,32,Butambala,"0.27866876712257194, 32.270061356730025",,32,Kakubo UMEA PS,School,32
+33,45,St. Kizito Bulugu PS #1,Lighting Only,Installed,5/17/2021,,,33,2026,244.00,Inferred,,,33,Butambala,"0.27196, 32.22813",,33,St. Kizito Bulugu PS,School,33
+41,54,Kawami C/S PS #1,Lighting Only,Installed,5/4/2021,,,41,2026,206.00,Inferred,,,41,Butambala,"0.21702231068504635, 32.20161073195926",,41,Kawami C/S PS,School,41
+45,60,St. Joseph Kikkunyu PS #1,Lighting Only,Installed,4/29/2021,,,45,2026,115.00,Inferred,,,45,Butambala,"0.29084072056539617, 32.20643998095017",,45,St. Joseph Kikkunyu PS,School,45
+48,55,Buyenga Q/S PS #1,Lighting Only,Installed,5/12/2021,,,48,2026,69.00,Inferred,,,48,Butambala,"0.2426636393601461, 32.21167347705285",,48,Buyenga Q/S PS,School,48
+55,71,Simba Islamic PS #1,Lighting Only,Installed,12/4/2021,,,55,2026,471.00,Inferred,,,55,Butambala,"0.24338529610769266, 32.16047135543981",,55,Simba Islamic PS,School,55
+62,73,Kayenje C/S PS #1,Lighting Only,Installed,11/20/2021,,,62,2026,507.00,Inferred,,,62,Butambala,"0.18126463548449379, 32.094237314499466",,62,Kayenje C/S PS,School,62
+64,74,Kayenje C/U PS #1,Lighting Only,Installed,11/13/2021,,,64,2026,577.00,Inferred,,,64,Butambala,"0.1847286065167981, 32.099080338263235",,64,Kayenje C/U PS,School,64
+67,78,Budde SS #1,Lighting Only,Installed,11/20/2021,,,67,2026,"1,382.00",Inferred,,,67,Butambala,"0.13061169040075618, 32.18117026633471",,67,Budde SS,School,67
+68,72,Kibugga C/S PS #1,Lighting Only,Installed,11/27/2021,,,68,2026,655.00,Inferred,,,68,Butambala,"0.11172639963379372, 31.999061241658268",,68,Kibugga C/S PS,School,68
+84,79,Butawuka Magezi Ntake SS #1,Lighting Only,Installed,11/27/2021,,,84,2026,"1,397.00",Inferred,,,84,Butambala,"0.11344504112973917, 32.00904403300039",,84,Butawuka Magezi Ntake SS,School,84
+85,80,Cardinal Wamala SS #1,Lighting Only,Installed,12/4/2021,,,85,2026,518.00,Inferred,,,85,Butambala,"0.11923614258981283, 31.994115015108996",,85,Cardinal Wamala SS,School,85
+90,81,Kitagobwa SS #1,Lighting Only,Installed,12/4/2021,,,90,2026,713.00,Inferred,,,90,Butambala,"0.10297309196381126, 31.927566751566033",,90,Kitagobwa SS,School,90
+98,75,Bulo C/S PS #1,Lighting Only,Installed,11/27/2021,,,98,2026,616.00,Inferred,,,98,Butambala,"0.11554, 31.99610",,98,Bulo C/S PS,School,98
+99,76,Bwetyaba UMEA PS #1,Lighting Only,Installed,11/20/2021,,,99,2026,628.00,Inferred,,,99,Butambala,"0.07669294389334638, 31.938332965612627",,99,Bwetyaba UMEA PS,School,99
+103,67,Bulo HC III #1,Lighting Only,Installed,12/11/2021,,,103,2026,"20,566.00",Inferred,,,103,Butambala,"0.1132195356143764, 31.998843355928518",,103,Bulo HC III,Health Centre,103
+104,68,Ngando HC III #1,Lighting Only,Installed,11/13/2021,,,104,2026,"21,950.00",Inferred,,,104,Butambala,"0.07585647329221862, 31.925437936171036",,104,Ngando HC III,Health Centre,104
+105,69,Kyabadaza HC III #1,Lighting Only,Installed,11/13/2021,,,105,2026,"15,104.00",Inferred,,,105,,"0.1209112570014584, 32.18190175541943",,105,Kyabadaza HC III,Health Centre,105
+150,93,Mpenja SS #1,Lighting Only,Installed,7/9/2025,,,150,2026,0.00,Inferred,,,150,Gomba,"0.22446801701869717, 32.052420229275",,150,Mpenja SS,School,150
+153,94,Kyayi Seed SS #1,Lighting Only,Installed,7/16/2025,,,153,2026,450.00,Inferred,,,153,Gomba,"0.21451, 31.39893",,153,Kyayi Seed SS,School,153
+162,90,Bukandula Mixed SS #1,Lighting Only,Installed,6/25/2025,,,162,2026,815.00,Inferred,,,162,Gomba,"0.16821046769081874, 31.83270331495879",,162,Bukandula Mixed SS,School,162
+186,83,Kasaka SSS #1,Lighting Only,Installed,2/19/2025,,,186,2026,"1,128.00",Inferred,,,186,Gomba,"0.18439681566284538, 31.901187131128054",,186,Kasaka SSS,School,186
+187,95,St. Leonard's SS #1,Lighting/USB Charging,Installed,10/20/2025,,,187,2026,738.00,Inferred,,,187,Gomba,"0.209640781035405, 31.67042415679149",,187,St. Leonard's SS,School,187
+189,96,Kisozi Seed SS #1,Lighting/USB Charging,Installed,10/27/2025,,,189,2026,"1,014.00",Inferred,,,189,Gomba,"0.07147331414145795, 31.598613791264945",,189,Kisozi Seed SS,School,189
+200,82,Mustard Seed Academy PS/N #1,Lighting Only,Installed,8/5/2024,,,200,2026,634.00,Inferred,,,200,Kalungu,"-0.16061744615813445, 31.880425277524857",,200,Mustard Seed Academy PS/SS/N,School,200
+200,86,Mustard Seed Academy SS #2,Lighting Only,Installed,5/16/2025,,,204,2026,772.00,Inferred,,,204,Gomba,"0.16366181335579397, 31.910778997005387",,204,Gomba Parents PS,School,204
+200,101,Mustard Seed Academy PS Dormitory #3,Lighting/USB Charging,Installed,1/2/2026,,,210,2026,577.00,Inferred,,,210,Gomba,"0.17428544942086127, 31.91015049417841",,210,Aidah And Topher PS,School,210
+204,88,Gomba Parents PS #1,Lighting Only,Installed,6/12/2025,,,211,2026,0.00,Inferred,,,211,Gomba,"0.1747284454969942, 31.906933266458957",,211,Kanoni Modern C/S PS/N,School,211
+210,89,Aidah And Topher PS #1,Lighting Only,Installed,6/18/2025,,,214,2026,362.00,Inferred,,,213,Wakiso,"0.18904801655234693, 32.41820991406409",,213,All We Are,N/A,213
+211,87,Kanoni Modern C/S P/N #1,Lighting Only,Installed,6/5/2025,,,216,2026,176.00,Inferred,,,214,Gomba,"0.21489234232271084, 32.04185780572558",,214,St. Joseph's VS/SS,School,
+213,84,All We Are #1,Lighting Only,Installed,3/14/2025,,,217,2026,501.00,Inferred,,,215,,"0.5761430855883503, 31.71955437174706",,215,St. Maria Goretti PS,School,
+213,85,All We Are #2,Lighting Only,Installed,3/14/2025,,,,,,,,,216,Gomba,"0.22297357807829282, 31.673943329130143",,216,Hillside PS,School,
+214,91,St. Joseph's VS/SS #1,Lighting Only,Installed,7/2/2025,,,,,,,,,217,Kalungu,"-0.1478538465772722, 31.87759147236952",,217,Vision Park Junior PS,School,217
+214,92,St. Joseph's VS/SS #2,Lighting Only,Installed,7/2/2025,,,,,,,,,,,,,,,,
+215,97,St. Maria Goretti PS #1,Lighting Only,Installed,11/8/2025,,,,,,,,,,,,,,,,
+215,98,St. Maria Goretti PS #2,Loads,Installed,11/8/2025,,,,,,,,,,,,,,,,
+216,99,Hillside PS #1,Lighting Only,Installed,11/4/2025,,,,,,,,,,,,,,,,
+217,100,Vision Park Junior PS #1,Lighting/USB Charging,Installed,1/2/2026,,,,,,,,,,,,,,,,
