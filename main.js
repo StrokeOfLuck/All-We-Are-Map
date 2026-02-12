@@ -4,6 +4,16 @@
 // + Cluster bubble CENTER TEXT (population + site count) visible from FAR away
 // + Individual sites keep CUSTOMER NAME from CSV + population label (near only)
 // + IMPORTANT: At <= noClusterAtOrBelowMeters, clustering is HARD OFF
+//
+// UPDATE: Better “merge together” control
+// - NEW knobs:
+//   1) clusterPixelRangeFar: how aggressively clusters merge (bigger = more merging)
+//   2) clusterRangeNearMeters/clusterRangeFarMeters: where clustering ramps on/off
+//   3) clusterMaxPixelRange: cap for extreme zoomed-out cases
+// - Behavior:
+//   * At/under noClusterAtOrBelowMeters => clustering OFF (true smallest dots)
+//   * From noClusterAtOrBelowMeters up to clusterRangeNearMeters => ramps ON gently
+//   * By clusterRangeFarMeters and beyond => full pixelRangeFar
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -50,13 +60,33 @@ const flatPitchDeg = -90;
 
 let autoAdvance = true;
 
-// ---- Clustering knobs ----
-const clusterPixelRange = 95;
-const clusterMinSize = 2;
+// -------------------------------------------------------------
+// CLUSTERING MERGE CONTROLS (NEW)
+// -------------------------------------------------------------
 
 // HARD RULE: no clusters at/under this camera height
-// (you asked for ~2000; you can bump this up if you want)
+// (You can set this to 2000 if you want the hard cutoff tighter)
 const noClusterAtOrBelowMeters = 5000;
+
+// “Full strength” merge value when zoomed out
+// Bigger = clusters merge sooner/more (helps prevent “two bubbles side-by-side”)
+const clusterPixelRangeFar = 140; // <-- YOU TUNE THIS (try 120–200)
+
+// Minimum cluster size
+const clusterMinSize = 2;
+
+// Smooth ramp region (so merge feels nicer and happens earlier)
+// height <= noClusterAtOrBelowMeters: OFF
+// height >= clusterRangeFarMeters: ON at full clusterPixelRangeFar
+const clusterRangeNearMeters = 10_000;     // start ramping on after cutoff
+const clusterRangeFarMeters  = 250_000;    // reach full merge by this height
+
+// Optional cap so we never go beyond some pixelRange
+const clusterMaxPixelRange = 220;
+
+// If true, we force an immediate recluster when pixelRange changes.
+// If you see flicker, set to false (Cesium often updates fine without toggling).
+const forceReclusterOnPixelRangeChange = true;
 
 // ---- Site label fade (near only) ----
 const siteLabelNear = 0;       // fully visible at 1200m
@@ -92,11 +122,12 @@ const sitesDS = new Cesium.CustomDataSource("sites");
 viewer.dataSources.add(sitesDS);
 
 sitesDS.clustering.enabled = true;
-sitesDS.clustering.pixelRange = clusterPixelRange;
+sitesDS.clustering.pixelRange = clusterPixelRangeFar;
 sitesDS.clustering.minimumClusterSize = clusterMinSize;
 
 // Track last state so we only toggle when needed
 let clusteringIsOn = true;
+let lastPixelRange = sitesDS.clustering.pixelRange;
 
 // =============================================================
 // HELPERS
@@ -208,23 +239,59 @@ async function tiltBackToFlat() {
 }
 
 // =============================================================
-// CLUSTERING CONTROL: HARD OFF under threshold
+// CLUSTERING CONTROL: HARD OFF under threshold + SMOOTH RAMP
 // =============================================================
+
+// Smoothstep helper (0..1) -> (0..1) eased
+function smoothstep(t) {
+  t = Cesium.Math.clamp(t, 0.0, 1.0);
+  return t * t * (3 - 2 * t);
+}
+
+function computeDynamicPixelRange(height) {
+  // If you want “merge more” even earlier, lower clusterRangeFarMeters,
+  // or raise clusterPixelRangeFar.
+  const t = (height - clusterRangeNearMeters) / (clusterRangeFarMeters - clusterRangeNearMeters);
+  const eased = smoothstep(t);
+  const px = Math.round(eased * clusterPixelRangeFar);
+  return Math.min(clusterMaxPixelRange, Math.max(0, px));
+}
+
 function updateClusteringByCameraDistance() {
   const height = viewer.camera.positionCartographic.height;
 
+  // HARD OFF close-in
   const shouldCluster = height > noClusterAtOrBelowMeters;
 
-  if (shouldCluster === clusteringIsOn) return;
+  if (!shouldCluster) {
+    if (clusteringIsOn) {
+      clusteringIsOn = false;
+      sitesDS.clustering.enabled = false; // hard off
+    }
+    return;
+  }
 
-  clusteringIsOn = shouldCluster;
-
-  // Toggle clustering hard
-  sitesDS.clustering.enabled = false;
-  if (clusteringIsOn) {
-    sitesDS.clustering.pixelRange = clusterPixelRange;
+  // If we’re here, clustering should be ON
+  if (!clusteringIsOn) {
+    clusteringIsOn = true;
     sitesDS.clustering.minimumClusterSize = clusterMinSize;
     sitesDS.clustering.enabled = true;
+    // set pixel range right away based on current height
+    lastPixelRange = -1;
+  }
+
+  // Dynamic pixelRange to improve “merge together”
+  const desiredPx = computeDynamicPixelRange(height);
+
+  if (desiredPx !== lastPixelRange) {
+    sitesDS.clustering.pixelRange = desiredPx;
+    lastPixelRange = desiredPx;
+
+    if (forceReclusterOnPixelRangeChange) {
+      // Nudge recluster immediately
+      sitesDS.clustering.enabled = false;
+      sitesDS.clustering.enabled = true;
+    }
   }
 }
 
@@ -637,7 +704,7 @@ async function buildEntitiesFromCSV() {
   sitesDS.clustering.enabled = false;
   sitesDS.clustering.enabled = true;
 
-  // Immediately enforce the hard threshold (might turn OFF if you’re already close)
+  // Immediately enforce threshold + ramp
   updateClusteringByCameraDistance();
 }
 
