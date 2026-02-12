@@ -51,10 +51,10 @@ const flatPitchDeg = -90;
 let autoAdvance = true;
 
 // --- HARD RULE: no clustering at/under this camera height ---
-const noClusterAtOrBelowMeters = 2000;
+const noClusterAtOrBelowMeters = 5000;
 
 // --- Custom clustering rules ---
-const bubblePaddingPx = 6; // extra space so they don't even "touch"
+const bubblePaddingPx = 50; // extra space so they don't even "touch"
 const maxMergePasses = 6;  // merge iterations to fully resolve overlaps
 
 // --- Bubble sizing (SNAPPED) ---
