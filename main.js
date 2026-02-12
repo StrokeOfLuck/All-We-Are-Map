@@ -65,13 +65,13 @@ let autoAdvance = true;
 // -------------------------------------------------------------
 
 const noClusterAtOrBelowMeters = 75000;
-const clusterPixelRangeFar = 400;
+const clusterPixelRangeFar = 260;
 const clusterMinSize = 2;
 
 const clusterRangeNearMeters = noClusterAtOrBelowMeters; // start ramp here
 const clusterRangeFarMeters  = 250_000;
 
-const clusterMaxPixelRange = 800;
+const clusterMaxPixelRange = 400;
 const forceReclusterOnPixelRangeChange = false;
 
 // ---- Site label fade (near only) ----
@@ -240,7 +240,7 @@ function computeDynamicPixelRange(height) {
   const t = (height - clusterRangeNearMeters) / (clusterRangeFarMeters - clusterRangeNearMeters);
   const eased = smoothstep(t);
   const px = Math.round(eased * clusterPixelRangeFar);
-  return Math.min(clusterMaxPixelRange, Math.max(80, px));
+  return Math.min(clusterMaxPixelRange, Math.max(0, px));
 }
 
 function updateClusteringByCameraDistance() {
@@ -473,12 +473,7 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.billboard.show = false;
 
   cluster.point.show = true;
-  //cluster.point.pixelSize = pixelSize;
-  
-// shrink bubbles when zoomed out
-const shrink = Cesium.Math.clamp(250_000 / height, 0.55, 1.0); // 0.55x .. 1.0x
-cluster.point.pixelSize = Math.round(pixelSize * shrink);
-  
+  cluster.point.pixelSize = pixelSize;
   cluster.point.color = Cesium.Color.YELLOW.withAlpha(0.88);
   cluster.point.outlineColor = Cesium.Color.BLACK;
   cluster.point.outlineWidth = 2;
