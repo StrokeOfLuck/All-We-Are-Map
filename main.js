@@ -480,8 +480,9 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
   cluster.label.show = true;
-
-  const popLine = `Pop: ${fmtInt(sumPop)}`;
+  
+  cluster.label.text = fmtInt(sumPop); // population ONLY
+  //const popLine = `Pop: ${fmtInt(sumPop)}`;
   //const countLine = showClusterSiteCount ? `\nSites: ${clusteredEntities.length}` : "";
   //cluster.label.text = `${popLine}${countLine}`;
 
