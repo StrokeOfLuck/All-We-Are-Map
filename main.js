@@ -56,7 +56,7 @@ const clusterMinSize = 2;
 
 // HARD RULE: no clusters at/under this camera height
 // (you asked for ~2000; you can bump this up if you want)
-const noClusterAtOrBelowMeters = 2000;
+const noClusterAtOrBelowMeters = 5000;
 
 // ---- Site label fade (near only) ----
 const siteLabelNear = 0;       // fully visible at 1200m
