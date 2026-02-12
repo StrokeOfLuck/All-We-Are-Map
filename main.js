@@ -3,7 +3,7 @@
 // + CLUSTERING (merge/split) with "big bubble -> splits -> splits"
 // + Cluster bubble CENTER TEXT (population + site count) visible from FAR away
 // + Individual sites keep CUSTOMER NAME from CSV + population label (near only)
-// + IMPORTANT: At siteRangeMeters=1200, you should be seeing the smallest dots (no cluster)
+// + IMPORTANT: At <= noClusterAtOrBelowMeters, clustering is HARD OFF
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -51,17 +51,15 @@ const flatPitchDeg = -90;
 let autoAdvance = true;
 
 // ---- Clustering knobs ----
-// IMPORTANT: we dynamically shrink pixelRange when you get close,
-// so clusters are forced to split before you reach 1200m.
-const clusterPixelRangeFar = 95;   // normal behavior far away
-const clusterPixelRangeNear = 0;   // no clustering when close
-const clusterDisableAtRangeMeters = 25_000; // start turning clustering off as you approach
-
+const clusterPixelRange = 95;
 const clusterMinSize = 2;
 
+// HARD RULE: no clusters at/under this camera height
+// (you asked for ~2000; you can bump this up if you want)
+const noClusterAtOrBelowMeters = 5000;
+
 // ---- Site label fade (near only) ----
-// Make sure labels are fully visible at 1200m.
-const siteLabelNear = 0;
+const siteLabelNear = 0;       // fully visible at 1200m
 const siteLabelFar = 80_000;
 const siteLabelFarAlpha = 0.0;
 
@@ -94,8 +92,11 @@ const sitesDS = new Cesium.CustomDataSource("sites");
 viewer.dataSources.add(sitesDS);
 
 sitesDS.clustering.enabled = true;
-sitesDS.clustering.pixelRange = clusterPixelRangeFar;
+sitesDS.clustering.pixelRange = clusterPixelRange;
 sitesDS.clustering.minimumClusterSize = clusterMinSize;
+
+// Track last state so we only toggle when needed
+let clusteringIsOn = true;
 
 // =============================================================
 // HELPERS
@@ -206,8 +207,31 @@ async function tiltBackToFlat() {
   });
 }
 
+// =============================================================
+// CLUSTERING CONTROL: HARD OFF under threshold
+// =============================================================
+function updateClusteringByCameraDistance() {
+  const height = viewer.camera.positionCartographic.height;
+
+  const shouldCluster = height > noClusterAtOrBelowMeters;
+
+  if (shouldCluster === clusteringIsOn) return;
+
+  clusteringIsOn = shouldCluster;
+
+  // Toggle clustering hard
+  sitesDS.clustering.enabled = false;
+  if (clusteringIsOn) {
+    sitesDS.clustering.pixelRange = clusterPixelRange;
+    sitesDS.clustering.minimumClusterSize = clusterMinSize;
+    sitesDS.clustering.enabled = true;
+  }
+}
+
+// =============================================================
+// TOUR TICK
+// =============================================================
 viewer.clock.onTick.addEventListener(() => {
-  // Keep clustering responsive while flying / zooming
   updateClusteringByCameraDistance();
 
   if (!orbit) return;
@@ -236,7 +260,7 @@ async function runTourGuarded() {
     await goAboveSiteFlat();
     if (!autoAdvance || myId !== tourRunId) break;
 
-    await zoomDownFlat();
+    await zoomDownFlat(); // ends at ~1200m (and clustering will be OFF)
     if (!autoAdvance || myId !== tourRunId) break;
 
     await tiltIntoOrbitPitch();
@@ -269,27 +293,6 @@ function toggleAutoTour() {
   }
 
   updateTourButton();
-}
-
-// =============================================================
-// CLUSTERING CONTROL: force split before you get to 1200m
-// =============================================================
-function updateClusteringByCameraDistance() {
-  // Camera height above ellipsoid is a good proxy for "zoom level"
-  const height = viewer.camera.positionCartographic.height;
-
-  // As we get closer than clusterDisableAtRangeMeters, smoothly reduce pixelRange to 0
-  // so clustering stops and smallest dots are visible well before 1200m.
-  const t = Cesium.Math.clamp(height / clusterDisableAtRangeMeters, 0.0, 1.0);
-  const px = Math.round(clusterPixelRangeNear + (clusterPixelRangeFar - clusterPixelRangeNear) * t);
-
-  if (sitesDS.clustering.pixelRange !== px) {
-    sitesDS.clustering.pixelRange = px;
-
-    // Nudge recluster (Cesium usually reacts, but this makes it immediate)
-    sitesDS.clustering.enabled = false;
-    sitesDS.clustering.enabled = true;
-  }
 }
 
 // =============================================================
@@ -630,10 +633,11 @@ async function buildEntitiesFromCSV() {
 
   console.log("Plotted installed sites:", plotted);
 
+  // Force clustering refresh (starts ON)
   sitesDS.clustering.enabled = false;
   sitesDS.clustering.enabled = true;
 
-  // Immediately apply near/far pixelRange logic after load
+  // Immediately enforce the hard threshold (might turn OFF if you’re already close)
   updateClusteringByCameraDistance();
 }
 
