@@ -1,10 +1,9 @@
 // =============================================================
-// FULL WORKING SCRIPT
-// + CUSTOM SCREEN-SPACE CLUSTERING (NO OVERLAPPING BUBBLES)
-// + Bubbles merge if they'd touch/overlap (based on pixel radii)
+// FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
+// + CLUSTERING (merge/split) with "big bubble -> splits -> splits"
 // + Cluster bubble CENTER TEXT (population + site count) visible from FAR away
-// + Individual sites keep CUSTOMER NAME + population label (near only)
-// + HARD RULE: clustering OFF at/under noClusterAtOrBelowMeters
+// + Individual sites keep CUSTOMER NAME from CSV + population label (near only)
+// + IMPORTANT: At <= noClusterAtOrBelowMeters, clustering is HARD OFF
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -46,56 +45,58 @@ const orbitPitchDeg = -45;
 const orbitSpeedDegPerSec = 8;
 const holdSeconds = 3;
 
+const flatHeadingDeg = 0;
 const flatPitchDeg = -90;
 
 let autoAdvance = true;
 
-// --- HARD RULE: no clustering at/under this camera height ---
-const noClusterAtOrBelowMeters = 3000;
+// ---- Clustering knobs ----
+const clusterPixelRange = 95;
+const clusterMinSize = 2;
 
-// --- Custom clustering rules ---
-const bubblePaddingPx = 6; // extra space so they don't even "touch"
-const maxMergePasses = 6;  // merge iterations to fully resolve overlaps
+// HARD RULE: no clusters at/under this camera height
+// (you asked for ~2000; you can bump this up if you want)
+const noClusterAtOrBelowMeters = 2000;
 
-// --- Bubble sizing (SNAPPED) ---
-const clusterSizeBuckets = [18, 26, 34, 44, 56, 70, 86, 104];
-const clusterSizeByPopulation = true;
-const showClusterSiteCount = true;
+// ---- Site label fade (near only) ----
+const siteLabelNear = 0;       // fully visible at 1200m
+const siteLabelFar = 80_000;
+const siteLabelFarAlpha = 0.0;
 
-// --- Cluster center text visibility ---
+// ---- Cluster center text visibility (ITS OWN THING) ----
 const clusterTextNear = 10_000;
 const clusterTextFar = 10_000_000;
 const clusterTextFarAlpha = 0.85;
 
-// --- Site label fade (near only) ---
-const siteLabelNear = 0;      // visible at 1200m
-const siteLabelFar = 80_000;
-const siteLabelFarAlpha = 0.0;
+// ---- Cluster bubble sizing (SNAPPED) ----
+const clusterSizeBuckets = [18, 26, 34, 44, 56, 70, 86, 104];
+const clusterSizeByPopulation = true;
+const showClusterSiteCount = true;
 
 // =============================================================
 // DATA + STATE
 // =============================================================
-const entities = []; // used for tour targets
-const siteItems = []; // sidebar list
+const entities = [];
+const siteItems = []; // { name, customerId, lat, lon, population|null, entity }
 
 let activeIndex = 0;
 let orbit = false;
 let headingDeg = 0;
 let lastPerf = performance.now();
 let isFlying = false;
+
 let tourRunId = 0;
 
-// Data sources
-const sitesDS = new Cesium.CustomDataSource("sites");     // individual sites
-const clustersDS = new Cesium.CustomDataSource("clusters"); // rendered clusters
+// Clustered datasource
+const sitesDS = new Cesium.CustomDataSource("sites");
 viewer.dataSources.add(sitesDS);
-viewer.dataSources.add(clustersDS);
 
-// IMPORTANT: disable Cesium built-in clustering entirely
-sitesDS.clustering.enabled = false;
+sitesDS.clustering.enabled = true;
+sitesDS.clustering.pixelRange = clusterPixelRange;
+sitesDS.clustering.minimumClusterSize = clusterMinSize;
 
-// Store references to the actual site entities (for clustering)
-const siteEntities = []; // { entity, pop, id, name }
+// Track last state so we only toggle when needed
+let clusteringIsOn = true;
 
 // =============================================================
 // HELPERS
@@ -206,7 +207,33 @@ async function tiltBackToFlat() {
   });
 }
 
+// =============================================================
+// CLUSTERING CONTROL: HARD OFF under threshold
+// =============================================================
+function updateClusteringByCameraDistance() {
+  const height = viewer.camera.positionCartographic.height;
+
+  const shouldCluster = height > noClusterAtOrBelowMeters;
+
+  if (shouldCluster === clusteringIsOn) return;
+
+  clusteringIsOn = shouldCluster;
+
+  // Toggle clustering hard
+  sitesDS.clustering.enabled = false;
+  if (clusteringIsOn) {
+    sitesDS.clustering.pixelRange = clusterPixelRange;
+    sitesDS.clustering.minimumClusterSize = clusterMinSize;
+    sitesDS.clustering.enabled = true;
+  }
+}
+
+// =============================================================
+// TOUR TICK
+// =============================================================
 viewer.clock.onTick.addEventListener(() => {
+  updateClusteringByCameraDistance();
+
   if (!orbit) return;
   if (isFlying) return;
 
@@ -233,7 +260,7 @@ async function runTourGuarded() {
     await goAboveSiteFlat();
     if (!autoAdvance || myId !== tourRunId) break;
 
-    await zoomDownFlat();
+    await zoomDownFlat(); // ends at ~1200m (and clustering will be OFF)
     if (!autoAdvance || myId !== tourRunId) break;
 
     await tiltIntoOrbitPitch();
@@ -368,261 +395,67 @@ function clusterFontForBubble(pixelSize) {
   return `bold ${s}px sans-serif`;
 }
 
-function clusterBubbleSizeFrom(sumPop, count) {
+// =============================================================
+// CLUSTER EVENT (bubble + CENTER TEXT)
+// =============================================================
+sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
+  const now = Cesium.JulianDate.now();
+
+  let sumPop = 0;
+  for (const e of clusteredEntities) {
+    const p = e.properties?.population?.getValue?.(now);
+    if (Number.isFinite(p)) sumPop += p;
+  }
+
   let rawSize;
   if (clusterSizeByPopulation) {
     rawSize = 16 + Math.log10(Math.max(sumPop, 1)) * 18;
   } else {
-    rawSize = 18 + Math.sqrt(count) * 12;
-  }
-  return pickBucketSize(rawSize);
-}
-
-// =============================================================
-// CUSTOM CLUSTERING (NO OVERLAP)
-// =============================================================
-function unionFind(n) {
-  const parent = Array.from({ length: n }, (_, i) => i);
-  const find = (x) => {
-    while (parent[x] !== x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  };
-  const union = (a, b) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent[rb] = ra;
-  };
-  return { parent, find, union };
-}
-
-function buildClustersFromNodes(nodes, getRadiusFn) {
-  const n = nodes.length;
-  const uf = unionFind(n);
-
-  for (let i = 0; i < n; i++) {
-    const a = nodes[i];
-    const ra = getRadiusFn(a);
-
-    for (let j = i + 1; j < n; j++) {
-      const b = nodes[j];
-      const rb = getRadiusFn(b);
-
-      const dx = a.sx - b.sx;
-      const dy = a.sy - b.sy;
-      const d = Math.sqrt(dx * dx + dy * dy);
-
-      if (d <= ra + rb + bubblePaddingPx) {
-        uf.union(i, j);
-      }
-    }
+    const n = clusteredEntities.length;
+    rawSize = 18 + Math.sqrt(n) * 12;
   }
 
-  const groups = new Map(); // root -> [idx...]
-  for (let i = 0; i < n; i++) {
-    const r = uf.find(i);
-    if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(i);
-  }
+  const pixelSize = pickBucketSize(rawSize);
 
-  return Array.from(groups.values()).map((idxs) => idxs.map((i) => nodes[i]));
-}
+  cluster.billboard.show = false;
 
-function weightedAverageCartesian(cartesians, weights) {
-  let x = 0, y = 0, z = 0, wsum = 0;
-  for (let i = 0; i < cartesians.length; i++) {
-    const w = weights[i];
-    x += cartesians[i].x * w;
-    y += cartesians[i].y * w;
-    z += cartesians[i].z * w;
-    wsum += w;
-  }
-  if (wsum === 0) return cartesians[0];
-  return new Cesium.Cartesian3(x / wsum, y / wsum, z / wsum);
-}
+  cluster.point.show = true;
+  cluster.point.pixelSize = pixelSize;
+  cluster.point.color = Cesium.Color.YELLOW.withAlpha(0.88);
+  cluster.point.outlineColor = Cesium.Color.BLACK;
+  cluster.point.outlineWidth = 2;
+  cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-function updateClusters() {
-  const height = viewer.camera.positionCartographic.height;
+  cluster.label.show = true;
 
-  // HARD OFF close-in: show smallest dots
-  if (height <= noClusterAtOrBelowMeters) {
-    clustersDS.entities.removeAll();
-    for (const se of siteEntities) {
-      se.entity.show = true;
-    }
-    return;
-  }
+  const popLine = `Pop: ${fmtInt(sumPop)}`;
+  const countLine = showClusterSiteCount ? `\nSites: ${clusteredEntities.length}` : "";
+  cluster.label.text = `${popLine}${countLine}`;
 
-  // Build nodes in screen space
-  const now = Cesium.JulianDate.now();
-  const scene = viewer.scene;
-  const ellipsoid = scene.globe.ellipsoid;
+  cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+  cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+  cluster.label.pixelOffset = Cesium.Cartesian2.ZERO;
+  cluster.label.eyeOffset = Cesium.Cartesian3.ZERO;
+  cluster.label.heightReference = Cesium.HeightReference.NONE;
+  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-  const nodes = [];
+  cluster.label.showBackground = false;
+  cluster.label.font = clusterFontForBubble(pixelSize);
+  cluster.label.fillColor = Cesium.Color.BLACK;
+  cluster.label.outlineWidth = 0;
 
-  for (const se of siteEntities) {
-    const e = se.entity;
-    const pos = e.position?.getValue(now);
-    if (!pos) continue;
-
-    // Skip behind globe / not on screen
-    const windowPos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(scene, pos);
-    if (!windowPos) continue;
-
-    // Base radius: single dot radius in pixels
-    const basePx = e.point?.pixelSize?.getValue?.(now) ?? e.point?.pixelSize ?? 10;
-    const baseRadius = Math.max(3, Number(basePx) / 2);
-
-    nodes.push({
-      entity: e,
-      pos,
-      sx: windowPos.x,
-      sy: windowPos.y,
-      pop: se.pop,
-      baseRadius,
-    });
-  }
-
-  // If nothing, clear
-  clustersDS.entities.removeAll();
-  if (nodes.length === 0) return;
-
-  // Iteratively merge until no overlaps, using cluster radii
-  let clusters = nodes.map((n) => [n]);
-
-  for (let pass = 0; pass < maxMergePasses; pass++) {
-    // Compute each cluster's radius from its population/count
-    const clusterRadius = new Map(); // clusterIndex -> radiusPx
-    for (let i = 0; i < clusters.length; i++) {
-      const c = clusters[i];
-      const sumPop = c.reduce((s, n) => s + (Number(n.pop) || 0), 0);
-      const px = clusterBubbleSizeFrom(sumPop, c.length);
-      clusterRadius.set(i, px / 2);
-    }
-
-    // Create temporary "super nodes" for overlap testing between clusters
-    const superNodes = clusters.map((c, idx) => {
-      // center in screen space (average)
-      const cx = c.reduce((s, n) => s + n.sx, 0) / c.length;
-      const cy = c.reduce((s, n) => s + n.sy, 0) / c.length;
-      return {
-        idx,
-        sx: cx,
-        sy: cy,
-        radius: clusterRadius.get(idx),
-        members: c,
-      };
-    });
-
-    // Merge any overlapping super nodes
-    const merged = buildClustersFromNodes(
-      superNodes,
-      (sn) => sn.radius
-    );
-
-    // If stable (no change), break
-    if (merged.length === clusters.length) break;
-
-    // Rebuild clusters from merged superNodes
-    clusters = merged.map((group) => {
-      const allMembers = [];
-      for (const sn of group) {
-        allMembers.push(...sn.members);
-      }
-      return allMembers;
-    });
-  }
-
-  // Now render: hide individual sites that are in a cluster of size > 1
-  // Show individual sites that are alone (size 1) so you still see small dots
-  clustersDS.entities.removeAll();
-
-  // Default show all, then hide those clustered
-  for (const se of siteEntities) se.entity.show = true;
-
-  for (const c of clusters) {
-    if (c.length <= 1) continue;
-
-    // Hide member entities
-    for (const n of c) n.entity.show = false;
-
-    const sumPop = c.reduce((s, n) => s + (Number(n.pop) || 0), 0);
-    const bubblePx = clusterBubbleSizeFrom(sumPop, c.length);
-
-    // Cluster world position: weighted avg by population (fallback weight=1)
-    const cartesians = c.map((n) => n.pos);
-    const weights = c.map((n) => Math.max(1, Number(n.pop) || 1));
-    const clusterPos = weightedAverageCartesian(cartesians, weights);
-
-    clustersDS.entities.add({
-      position: clusterPos,
-
-      point: {
-        pixelSize: bubblePx,
-        color: Cesium.Color.YELLOW.withAlpha(0.88),
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-
-      label: {
-        show: true,
-        text:
-          `Pop: ${fmtInt(sumPop)}` +
-          (showClusterSiteCount ? `\nSites: ${c.length}` : ""),
-
-        verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-        pixelOffset: Cesium.Cartesian2.ZERO,
-        eyeOffset: Cesium.Cartesian3.ZERO,
-        heightReference: Cesium.HeightReference.NONE,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-
-        showBackground: false,
-        font: clusterFontForBubble(bubblePx),
-        fillColor: Cesium.Color.BLACK,
-        outlineWidth: 0,
-
-        translucencyByDistance: new Cesium.NearFarScalar(
-          clusterTextNear,
-          1.0,
-          clusterTextFar,
-          clusterTextFarAlpha
-        ),
-        scaleByDistance: new Cesium.NearFarScalar(
-          clusterTextNear,
-          1.0,
-          clusterTextFar,
-          1.0
-        ),
-      },
-    });
-  }
-}
-
-// Debounce cluster updates during camera motion
-let clusterUpdateQueued = false;
-function requestClusterUpdate() {
-  if (clusterUpdateQueued) return;
-  clusterUpdateQueued = true;
-
-  requestAnimationFrame(() => {
-    clusterUpdateQueued = false;
-    updateClusters();
-  });
-}
-
-// Recluster whenever camera changes
-viewer.camera.changed.addEventListener(() => {
-  requestClusterUpdate();
-});
-
-// Also update after render once (good for first frame)
-viewer.scene.postRender.addEventListener(() => {
-  // lightweight: only run if queued
-  if (clusterUpdateQueued) return;
+  cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
+    clusterTextNear,
+    1.0,
+    clusterTextFar,
+    clusterTextFarAlpha
+  );
+  cluster.label.scaleByDistance = new Cesium.NearFarScalar(
+    clusterTextNear,
+    1.0,
+    clusterTextFar,
+    1.0
+  );
 });
 
 // =============================================================
@@ -659,10 +492,8 @@ async function buildEntitiesFromCSV() {
   const IDX_CUST_LOC_ID = 21;
 
   sitesDS.entities.removeAll();
-  clustersDS.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
-  siteEntities.length = 0;
 
   const installedIds = new Set();
   for (let r = 1; r < rows.length; r++) {
@@ -797,15 +628,17 @@ async function buildEntitiesFromCSV() {
       entity,
     });
 
-    siteEntities.push({ entity, pop, id, name: customerName });
-
     plotted++;
   }
 
   console.log("Plotted installed sites:", plotted);
 
-  // Run first clustering pass
-  updateClusters();
+  // Force clustering refresh (starts ON)
+  sitesDS.clustering.enabled = false;
+  sitesDS.clustering.enabled = true;
+
+  // Immediately enforce the hard threshold (might turn OFF if you’re already close)
+  updateClusteringByCameraDistance();
 }
 
 // =============================================================
@@ -830,14 +663,7 @@ function flyToSite(entity) {
       Cesium.Math.toRadians(flatPitchDeg),
       siteRangeMeters
     ),
-    complete: () => {
-      canvas.focus();
-      // re-evaluate clusters after flight
-      updateClusters();
-    },
-    cancel: () => {
-      updateClusters();
-    },
+    complete: () => canvas.focus(),
   });
 }
 
@@ -978,7 +804,6 @@ window.addEventListener(
       headingDeg = 0;
       orbit = true;
 
-      updateClusters();
       e.preventDefault();
       return;
     }
@@ -992,7 +817,6 @@ window.addEventListener(
       await goAboveSiteFlat();
       await zoomDownFlat();
 
-      updateClusters();
       e.preventDefault();
       return;
     }
@@ -1006,7 +830,6 @@ window.addEventListener(
       await goAboveSiteFlat();
       await zoomDownFlat();
 
-      updateClusters();
       e.preventDefault();
       return;
     }
