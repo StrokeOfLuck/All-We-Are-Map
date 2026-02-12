@@ -56,7 +56,7 @@ let autoAdvance = true;
 
 // HARD RULE: no clusters at/under this camera height.
 // If you want "no clusters under ~2000", set to 2000.
-const noClusterAtOrBelowMeters = 5000;
+const noClusterAtOrBelowMeters = 25000;
 
 // Cluster labels visible far away (separate from site labels)
 const clusterTextNear = 10_000;
