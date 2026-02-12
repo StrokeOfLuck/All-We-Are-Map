@@ -482,9 +482,9 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.label.show = true;
   
   cluster.label.text = fmtInt(sumPop); // population ONLY
-  const popLine = `Pop: ${fmtInt(sumPop)}`;
+  //const popLine = `Pop: ${fmtInt(sumPop)}`;
   const countLine = showClusterSiteCount ? `\nSites: ${clusteredEntities.length}` : "";
-  //cluster.label.text = `${popLine}${countLine}`;
+  cluster.label.text = `${popLine}${countLine}`;
 
   cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
   cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
