@@ -3,6 +3,7 @@
 // + CLUSTERING (merge/split) with "big bubble -> splits -> splits"
 // + Cluster bubble CENTER TEXT (population + site count) visible from FAR away
 // + Individual sites keep CUSTOMER NAME from CSV + population label (near only)
+// + IMPORTANT: At siteRangeMeters=1200, you should be seeing the smallest dots (no cluster)
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -50,27 +51,28 @@ const flatPitchDeg = -90;
 let autoAdvance = true;
 
 // ---- Clustering knobs ----
-const clusterPixelRange = 95; // bigger = more merging (bigger bubbles)
+// IMPORTANT: we dynamically shrink pixelRange when you get close,
+// so clusters are forced to split before you reach 1200m.
+const clusterPixelRangeFar = 95;   // normal behavior far away
+const clusterPixelRangeNear = 0;   // no clustering when close
+const clusterDisableAtRangeMeters = 25_000; // start turning clustering off as you approach
+
 const clusterMinSize = 2;
 
-// ---- Site label fade (avoid "hard pop") ----
-const siteLabelNear = 2_000;     // show site labels when you're fairly close
-const siteLabelFar  = 250_000;   // fade out by this distance
+// ---- Site label fade (near only) ----
+// Make sure labels are fully visible at 1200m.
+const siteLabelNear = 0;
+const siteLabelFar = 80_000;
 const siteLabelFarAlpha = 0.0;
 
 // ---- Cluster center text visibility (ITS OWN THING) ----
-const clusterTextNear = 10_000;      // full opacity
-const clusterTextFar  = 10_000_000;  // still visible very far out
-const clusterTextFarAlpha = 0.85;    // keep visible, not fading to 0
+const clusterTextNear = 10_000;
+const clusterTextFar = 10_000_000;
+const clusterTextFarAlpha = 0.85;
 
-// ---- Cluster bubble sizing (SNAPPED so it doesn't "smoothly grow") ----
+// ---- Cluster bubble sizing (SNAPPED) ----
 const clusterSizeBuckets = [18, 26, 34, 44, 56, 70, 86, 104];
-
-// true => cluster size uses summed population (log)
-// false => cluster size uses count
 const clusterSizeByPopulation = true;
-
-// show "Sites: N" as second line
 const showClusterSiteCount = true;
 
 // =============================================================
@@ -92,7 +94,7 @@ const sitesDS = new Cesium.CustomDataSource("sites");
 viewer.dataSources.add(sitesDS);
 
 sitesDS.clustering.enabled = true;
-sitesDS.clustering.pixelRange = clusterPixelRange;
+sitesDS.clustering.pixelRange = clusterPixelRangeFar;
 sitesDS.clustering.minimumClusterSize = clusterMinSize;
 
 // =============================================================
@@ -166,7 +168,7 @@ async function goAboveSiteFlat() {
   await flyToRange({
     rangeMeters: overviewRangeMeters,
     pitchDeg: flatPitchDeg,
-    headingDegValue: flatHeadingDeg,
+    headingDegValue: 0,
     durationSec: travelSeconds / 2,
   });
 }
@@ -177,7 +179,7 @@ async function zoomDownFlat() {
   await flyToRange({
     rangeMeters: siteRangeMeters,
     pitchDeg: flatPitchDeg,
-    headingDegValue: flatHeadingDeg,
+    headingDegValue: 0,
     durationSec: zoomInSeconds,
   });
 }
@@ -199,12 +201,15 @@ async function tiltBackToFlat() {
   await flyToRange({
     rangeMeters: siteRangeMeters,
     pitchDeg: flatPitchDeg,
-    headingDegValue: flatHeadingDeg,
+    headingDegValue: 0,
     durationSec: tiltSeconds,
   });
 }
 
 viewer.clock.onTick.addEventListener(() => {
+  // Keep clustering responsive while flying / zooming
+  updateClusteringByCameraDistance();
+
   if (!orbit) return;
   if (isFlying) return;
 
@@ -264,6 +269,27 @@ function toggleAutoTour() {
   }
 
   updateTourButton();
+}
+
+// =============================================================
+// CLUSTERING CONTROL: force split before you get to 1200m
+// =============================================================
+function updateClusteringByCameraDistance() {
+  // Camera height above ellipsoid is a good proxy for "zoom level"
+  const height = viewer.camera.positionCartographic.height;
+
+  // As we get closer than clusterDisableAtRangeMeters, smoothly reduce pixelRange to 0
+  // so clustering stops and smallest dots are visible well before 1200m.
+  const t = Cesium.Math.clamp(height / clusterDisableAtRangeMeters, 0.0, 1.0);
+  const px = Math.round(clusterPixelRangeNear + (clusterPixelRangeFar - clusterPixelRangeNear) * t);
+
+  if (sitesDS.clustering.pixelRange !== px) {
+    sitesDS.clustering.pixelRange = px;
+
+    // Nudge recluster (Cesium usually reacts, but this makes it immediate)
+    sitesDS.clustering.enabled = false;
+    sitesDS.clustering.enabled = true;
+  }
 }
 
 // =============================================================
@@ -361,26 +387,23 @@ function pickBucketSize(rawSize) {
   return pixelSize;
 }
 
-// Cluster font reacts to bubble size (bigger bubble -> bigger text)
 function clusterFontForBubble(pixelSize) {
   const s = clamp(Math.round(pixelSize * 0.33), 12, 28);
   return `bold ${s}px sans-serif`;
 }
 
 // =============================================================
-// CLUSTER EVENT (bubble + CENTER TEXT that is independent)
+// CLUSTER EVENT (bubble + CENTER TEXT)
 // =============================================================
 sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
   const now = Cesium.JulianDate.now();
 
-  // Sum population
   let sumPop = 0;
   for (const e of clusteredEntities) {
     const p = e.properties?.population?.getValue?.(now);
     if (Number.isFinite(p)) sumPop += p;
   }
 
-  // Bubble size driver
   let rawSize;
   if (clusterSizeByPopulation) {
     rawSize = 16 + Math.log10(Math.max(sumPop, 1)) * 18;
@@ -389,10 +412,8 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
     rawSize = 18 + Math.sqrt(n) * 12;
   }
 
-  // SNAPPED bucket size so it "splits" instead of smoothly growing
   const pixelSize = pickBucketSize(rawSize);
 
-  // Hide billboard, show point bubble
   cluster.billboard.show = false;
 
   cluster.point.show = true;
@@ -402,14 +423,12 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.point.outlineWidth = 2;
   cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-  // === CENTER TEXT: its own thing (not tied to site label rules) ===
   cluster.label.show = true;
 
   const popLine = `Pop: ${fmtInt(sumPop)}`;
   const countLine = showClusterSiteCount ? `\nSites: ${clusteredEntities.length}` : "";
   cluster.label.text = `${popLine}${countLine}`;
 
-  // Hard center (kills "above bubble" behavior)
   cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
   cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
   cluster.label.pixelOffset = Cesium.Cartesian2.ZERO;
@@ -417,13 +436,11 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.label.heightReference = Cesium.HeightReference.NONE;
   cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 
-  // Styling
   cluster.label.showBackground = false;
   cluster.label.font = clusterFontForBubble(pixelSize);
   cluster.label.fillColor = Cesium.Color.BLACK;
   cluster.label.outlineWidth = 0;
 
-  // Visible FAR AWAY (separate from site label fade)
   cluster.label.translucencyByDistance = new Cesium.NearFarScalar(
     clusterTextNear,
     1.0,
@@ -457,34 +474,27 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  // A–F Installed Systems table
-  const IDX_INST_CUST_ID = 0; // A
-  const IDX_INST_STATUS = 4;  // E
+  const IDX_INST_CUST_ID = 0;
+  const IDX_INST_STATUS = 4;
 
-  // I–L Population table
-  const IDX_POP_CUST_ID = 8;   // I
-  const IDX_POP_YEAR = 9;      // J
-  const IDX_POP_VALUE = 10;    // K
+  const IDX_POP_CUST_ID = 8;
+  const IDX_POP_YEAR = 9;
+  const IDX_POP_VALUE = 10;
 
-  // O–Q Locations table
-  const IDX_LOC_ID = 14;       // O
-  const IDX_LOC_COORDS = 16;   // Q
+  const IDX_LOC_ID = 14;
+  const IDX_LOC_COORDS = 16;
 
-  // S–V Customers table
-  const IDX_CUST_ID = 18;      // S
-  const IDX_CUST_NAME = 19;    // T
-  const IDX_CUST_LOC_ID = 21;  // V
+  const IDX_CUST_ID = 18;
+  const IDX_CUST_NAME = 19;
+  const IDX_CUST_LOC_ID = 21;
 
-  // Reset
   sitesDS.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
-  // PASS 0: Installed IDs
   const installedIds = new Set();
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-
     const custIdNum = toNum(row[IDX_INST_CUST_ID]);
     if (custIdNum == null) continue;
 
@@ -494,8 +504,7 @@ async function buildEntitiesFromCSV() {
     installedIds.add(String(Math.trunc(custIdNum)));
   }
 
-  // PASS 1: Latest population per customer id
-  const popById = new Map(); // id -> {year, pop}
+  const popById = new Map();
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
@@ -515,7 +524,6 @@ async function buildEntitiesFromCSV() {
     }
   }
 
-  // PASS 2: Coords by loc id
   const coordsByLocId = new Map();
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
@@ -529,8 +537,7 @@ async function buildEntitiesFromCSV() {
     coordsByLocId.set(String(Math.trunc(locIdNum)), coord);
   }
 
-  // PASS 3: Customer name + locId by customer id
-  const customerById = new Map(); // id -> {name, locId}
+  const customerById = new Map();
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
@@ -546,7 +553,6 @@ async function buildEntitiesFromCSV() {
     if (!customerById.has(id)) customerById.set(id, { name, locId });
   }
 
-  // PASS 4: Add entities (installed + coords + pop)
   let plotted = 0;
 
   for (const id of installedIds) {
@@ -571,13 +577,12 @@ async function buildEntitiesFromCSV() {
 
       properties: {
         customerId: id,
-        customerName: customerName,
+        customerName,
         population: pop,
         year: popRec.year,
         locId: cust.locId,
       },
 
-      // Dot (visible when NOT clustered)
       point: {
         pixelSize: popToPixelSize(pop),
         color: Cesium.Color.YELLOW,
@@ -586,7 +591,6 @@ async function buildEntitiesFromCSV() {
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
 
-      // Pin (optional)
       billboard: {
         image: "./icons/solar_pin.png",
         width: 28,
@@ -596,7 +600,6 @@ async function buildEntitiesFromCSV() {
         scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
       },
 
-      // Individual site label (near only)
       label: {
         text: `${customerName}\nPopulation served: ${fmtInt(pop)}`,
         font: "bold 18px sans-serif",
@@ -607,7 +610,6 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
         pixelOffset: new Cesium.Cartesian2(0, -55),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-
         translucencyByDistance: new Cesium.NearFarScalar(siteLabelNear, 1.0, siteLabelFar, siteLabelFarAlpha),
         scaleByDistance: new Cesium.NearFarScalar(siteLabelNear, 1.0, siteLabelFar, siteLabelFarAlpha),
       },
@@ -628,9 +630,11 @@ async function buildEntitiesFromCSV() {
 
   console.log("Plotted installed sites:", plotted);
 
-  // Force recluster now that we loaded data
   sitesDS.clustering.enabled = false;
   sitesDS.clustering.enabled = true;
+
+  // Immediately apply near/far pixelRange logic after load
+  updateClusteringByCameraDistance();
 }
 
 // =============================================================
@@ -839,7 +843,7 @@ window.addEventListener(
 );
 
 // =============================================================
-// Floating controls (expects your existing HTML buttons/side bar)
+// Floating controls
 // =============================================================
 (function wireFloatingControls() {
   const sidebar = document.getElementById("sidebar");
