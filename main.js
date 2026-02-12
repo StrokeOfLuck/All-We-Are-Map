@@ -482,7 +482,7 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
   cluster.label.show = true;
   
   cluster.label.text = fmtInt(sumPop); // population ONLY
-  //const popLine = `Pop: ${fmtInt(sumPop)}`;
+  const popLine = `Pop: ${fmtInt(sumPop)}`;
   const countLine = showClusterSiteCount ? `\nSites: ${clusteredEntities.length}` : "";
   cluster.label.text = `${popLine}${countLine}`;
 
