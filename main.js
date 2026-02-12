@@ -64,28 +64,14 @@ let autoAdvance = true;
 // CLUSTERING MERGE CONTROLS (NEW)
 // -------------------------------------------------------------
 
-// HARD RULE: no clusters at/under this camera height
-// (You can set this to 2000 if you want the hard cutoff tighter)
 const noClusterAtOrBelowMeters = 75000;
-
-// “Full strength” merge value when zoomed out
-// Bigger = clusters merge sooner/more (helps prevent “two bubbles side-by-side”)
-const clusterPixelRangeFar = 260; // <-- YOU TUNE THIS (try 120–200)
-
-// Minimum cluster size
+const clusterPixelRangeFar = 260;
 const clusterMinSize = 2;
 
-// Smooth ramp region (so merge feels nicer and happens earlier)
-// height <= noClusterAtOrBelowMeters: OFF
-// height >= clusterRangeFarMeters: ON at full clusterPixelRangeFar
-const maxpixel= 75000;     // start ramping on after cutoff
-const clusterRangeFarMeters  = 250_000;    // reach full merge by this height
+const clusterRangeNearMeters = noClusterAtOrBelowMeters; // start ramp here
+const clusterRangeFarMeters  = 250_000;
 
-// Optional cap so we never go beyond some pixelRange
 const clusterMaxPixelRange = 400;
-
-// If true, we force an immediate recluster when pixelRange changes.
-// If you see flicker, set to false (Cesium often updates fine without toggling).
 const forceReclusterOnPixelRangeChange = false;
 
 // ---- Site label fade (near only) ----
