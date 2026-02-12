@@ -355,10 +355,11 @@ function findNearestCustomerIdColumn(headers, idxLatestFlag) {
 }
 
 // =============================================================
-// MAIN
+// MAIN (Impact_Map_Export_3.0 format)
 // =============================================================
 async function buildEntitiesFromCSV() {
-  const CSV_URL = "Impact_Map_Export - Sheet1.csv";
+  // 👇 change this to your new file name in the repo
+  const CSV_URL = "Impact_Map_Export_3.0 - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
   if (!res.ok) {
@@ -373,106 +374,166 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  const headers = rows[0].map((h) =>
-    String(h).replace("\ufeff", "").trim().toLowerCase()
-  );
+  // New CSV layout (0-based indices)
+  // A–F Installed Systems table
+  const IDX_INST_CUST_ID = 0;  // A
+  const IDX_INST_STATUS  = 4;  // E ("Installed")
 
-  // Main coordinate block
-  const idxCoord = headers.indexOf("coordinates");
-  const idxMainId = headers.indexOf("customer id");
-  const idxMainName = headers.indexOf("customer name");
+  // I–L Population table
+  const IDX_POP_CUST_ID  = 8;  // I
+  const IDX_POP_YEAR     = 9;  // J
+  const IDX_POP_VALUE    = 10; // K
 
-  // Population block columns
-  const idxLatestFlag = headers.indexOf("is this row the latest year for that customer?");
-  const idxPopLatest = headers.indexOf("population (latest year only)");
+  // O–Q Locations table
+  const IDX_LOC_ID       = 14; // O
+  const IDX_LOC_COORDS   = 16; // Q (Coordinates)
 
-  if (idxCoord === -1 || idxMainId === -1 || idxMainName === -1) {
-    console.error("Missing required columns for coordinate sites.");
-    console.log("Headers found:", headers);
-    return;
-  }
-  if (idxLatestFlag === -1 || idxPopLatest === -1) {
-    console.error("Missing required columns for population lookup.");
-    console.log("Headers found:", headers);
-    return;
-  }
+  // S–V Customers table
+  const IDX_CUST_ID      = 18; // S
+  const IDX_CUST_NAME    = 19; // T
+  const IDX_CUST_LOC_ID  = 21; // V
 
-  // ✅ Correct: force AB by finding Customer ID nearest to AI
-  const idxPopId = findNearestCustomerIdColumn(headers, idxLatestFlag);
-  if (idxPopId == null) {
-    console.error("Could not find the population-block Customer ID column near AI.");
-    console.log("Headers found:", headers);
-    return;
-  }
-
-  // --- PASS 1: populationById from AB + AI + AJ ---
-  const populationById = new Map();
-
-  let latestTrueRows = 0;
-  let savedPop = 0;
-
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-
-    if (!parseBool(row[idxLatestFlag])) continue;
-    latestTrueRows++;
-
-    const idNum = toNum(row[idxPopId]);
-    if (idNum == null) continue;
-
-    const pop = toNum(row[idxPopLatest]);
-    // Keep even 0.00 if that’s what the sheet has
-    if (pop == null) continue;
-
-    const idStr = String(Math.trunc(idNum));
-    populationById.set(idStr, pop);
-    savedPop++;
-  }
-
-  console.log(`Population ID column used: index ${idxPopId} ("${headers[idxPopId]}")`);
-  console.log(`AI==TRUE rows scanned: ${latestTrueRows}`);
-  console.log(`Population entries saved: ${savedPop}`);
-
-  // --- PASS 2: plot ALL coordinate sites ---
+  // Reset
   viewer.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
-  const seenMainIds = new Set();
-
-  let created = 0;
-  let withPop = 0;
+  // -------------------------------------------------------------
+  // PASS 0: Collect Installed Customer IDs (from Systems table)
+  // -------------------------------------------------------------
+  const installedIds = new Set();
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
-    const idNum = toNum(row[idxMainId]);
-    const name = String(row[idxMainName] ?? "").trim();
-    const coord = parseCoordinatesLatLon(row[idxCoord]);
+    const custIdNum = toNum(row[IDX_INST_CUST_ID]);
+    if (custIdNum == null) continue;
 
-    if (idNum == null || !name || !coord) continue;
+    const status = String(row[IDX_INST_STATUS] ?? "").trim().toLowerCase();
+    if (status !== "installed") continue;
 
-    const idStr = String(Math.trunc(idNum));
+    installedIds.add(String(Math.trunc(custIdNum)));
+  }
 
-    // Deduplicate main block by ID
-    if (seenMainIds.has(idStr)) continue;
-    seenMainIds.add(idStr);
+  console.log("Installed customer IDs:", installedIds.size);
 
-    const pop = populationById.has(idStr) ? populationById.get(idStr) : null;
-    if (pop != null) withPop++;
+  // -------------------------------------------------------------
+  // PASS 1: Build latest population per Customer ID
+  // -------------------------------------------------------------
+  // Keep the max year row per customer. If tie, keep the bigger population.
+  const popById = new Map(); // id -> {year, pop}
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+
+    const idNum = toNum(row[IDX_POP_CUST_ID]);
+    const yearNum = toNum(row[IDX_POP_YEAR]);
+    const popNum = toNum(row[IDX_POP_VALUE]);
+
+    if (idNum == null || yearNum == null || popNum == null) continue;
+
+    const id = String(Math.trunc(idNum));
+    const year = Math.trunc(yearNum);
+    const pop = popNum;
+
+    const prev = popById.get(id);
+    if (!prev || year > prev.year || (year === prev.year && pop > prev.pop)) {
+      popById.set(id, { year, pop });
+    }
+  }
+
+  console.log("Population IDs with data:", popById.size);
+
+  // -------------------------------------------------------------
+  // PASS 2: Build coordinates by Loc ID
+  // -------------------------------------------------------------
+  const coordsByLocId = new Map(); // locId -> {lat, lon}
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+
+    const locIdNum = toNum(row[IDX_LOC_ID]);
+    if (locIdNum == null) continue;
+
+    const coord = parseCoordinatesLatLon(row[IDX_LOC_COORDS]);
+    if (!coord) continue;
+
+    const locId = String(Math.trunc(locIdNum));
+    coordsByLocId.set(locId, coord);
+  }
+
+  console.log("Locations with coords:", coordsByLocId.size);
+
+  // -------------------------------------------------------------
+  // PASS 3: Build customer name + locId by Customer ID
+  // -------------------------------------------------------------
+  const customerById = new Map(); // id -> {name, locId}
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+
+    const idNum = toNum(row[IDX_CUST_ID]);
+    if (idNum == null) continue;
+
+    const name = String(row[IDX_CUST_NAME] ?? "").trim();
+    const locIdNum = toNum(row[IDX_CUST_LOC_ID]);
+
+    if (!name || locIdNum == null) continue;
+
+    const id = String(Math.trunc(idNum));
+    const locId = String(Math.trunc(locIdNum));
+
+    // first good one wins (or you can overwrite if you prefer)
+    if (!customerById.has(id)) {
+      customerById.set(id, { name, locId });
+    }
+  }
+
+  console.log("Customers with name+loc:", customerById.size);
+
+  // -------------------------------------------------------------
+  // PASS 4: Plot ONLY installed customers that have coords + pop
+  // -------------------------------------------------------------
+  let plotted = 0;
+  let missingCustomer = 0;
+  let missingCoords = 0;
+  let missingPop = 0;
+
+  for (const id of installedIds) {
+    const cust = customerById.get(id);
+    if (!cust) {
+      missingCustomer++;
+      continue;
+    }
+
+    const coord = coordsByLocId.get(cust.locId);
+    if (!coord) {
+      missingCoords++;
+      continue;
+    }
+
+    const popRec = popById.get(id);
+    if (!popRec || popRec.pop == null) {
+      missingPop++;
+      continue;
+    }
+
+    const pop = popRec.pop;
+    if (pop <= 0) continue;
 
     const { lat, lon } = coord;
 
-    // ✅ Name above population (two-line label)
-   const labelText = pop != null ? `${name}\nPopulation served: ${fmtInt(pop)}` : `${name}`;
+    const labelText = `${cust.name}\nPopulation served: ${fmtInt(pop)}`;
 
     const entity = viewer.entities.add({
-      name,
+      name: cust.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
       properties: {
-        customerId: idStr,
+        customerId: id,
         population: pop,
+        year: popRec.year,
+        locId: cust.locId,
       },
 
       point: {
@@ -507,14 +568,23 @@ async function buildEntitiesFromCSV() {
     });
 
     entities.push(entity);
-    siteItems.push({ name, customerId: idStr, lat, lon, population: pop, entity });
-    created++;
+    siteItems.push({
+      name: cust.name,
+      customerId: id,
+      lat,
+      lon,
+      population: pop,
+      entity,
+    });
+
+    plotted++;
   }
 
-  console.log(`Points created: ${created}`);
-  console.log(`Points with population matched (AI TRUE row found): ${withPop}`);
+  console.log("Plotted installed sites:", plotted);
+  console.log("Missing customer row:", missingCustomer);
+  console.log("Missing coords:", missingCoords);
+  console.log("Missing population:", missingPop);
 }
-
 // =============================================================
 // SIDEBAR
 // =============================================================
