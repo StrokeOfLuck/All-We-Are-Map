@@ -1,9 +1,8 @@
 // =============================================================
-// FULL WORKING SCRIPT (two-table CSV, robust join)
-// - Site table: A (Customer ID), B (Customer Name), Coordinates column header
-// - Population table: AB (Customer ID), AI (Latest? TRUE), AJ (Population)
-// - Tables are NOT aligned by row index, so we build a pop map first, then join.
-// - Label shows: Customer Name (top) + Population (under)
+// FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
+// PASS 1: Build populationById from population block:
+//   Use Customer ID column nearest to AI + AJ where AI==TRUE
+// PASS 2: Plot ALL coordinate sites (Customer ID + Customer Name + Coordinates)
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -23,6 +22,18 @@ viewer.resolutionScale = window.devicePixelRatio;
 const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
 canvas.focus();
+
+
+/*
+// FREE backup basemap (no tokens)
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    credit: "OpenTopoMap",
+  })
+);
+*/
 
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
@@ -51,10 +62,10 @@ const flatPitchDeg = -90;
 let autoAdvance = true;
 
 // =============================================================
-// STATE
+// DATA + STATE
 // =============================================================
 const entities = [];
-const siteItems = [];
+const siteItems = []; // { name, customerId, lat, lon, population|null, entity }
 
 let activeIndex = 0;
 let orbit = false;
@@ -196,7 +207,7 @@ viewer.clock.onTick.addEventListener(() => {
 async function runTourGuarded() {
   const myId = ++tourRunId;
 
-  while (autoAdvance && myId === tourRunId) {
+  while (autoAdvance && myId === tourRunId && entities.length > 0) {
     await goAboveSiteFlat();
     if (!autoAdvance || myId !== tourRunId) break;
 
@@ -231,11 +242,12 @@ function toggleAutoTour() {
     orbit = false;
     tourRunId++;
   }
+
   updateTourButton();
 }
 
 // =============================================================
-// CSV PARSE + UTILS
+// CSV HELPERS
 // =============================================================
 function parseCSV(text) {
   const rows = [];
@@ -317,26 +329,36 @@ function clamp(x, a, b) {
 }
 
 function popToPixelSize(pop) {
+  if (pop == null) return 10;
   const p = Math.max(0, Number(pop) || 0);
   const size = 6 + Math.log10(Math.max(p, 1)) * 6;
   return clamp(size, 6, 34);
 }
 
-// IMPORTANT: normalize IDs consistently between A and AB
-function normalizeId(v) {
-  if (v == null) return "";
-  const s = String(v).trim();
-  if (!s) return "";
-  // if looks numeric (including "123.0") => turn into integer string
-  const n = toNum(s);
-  if (n != null) return String(Math.trunc(n));
-  return s;
+// ✅ NEW: pick the Customer ID column that is physically closest to AI (latest flag)
+function findNearestCustomerIdColumn(headers, idxLatestFlag) {
+  const isCustomerIdHeader = (h) => String(h || "").trim().toLowerCase() === "customer id";
+
+  // Prefer LEFT side (AB is left of AI)
+  for (let d = 1; d <= 30; d++) {
+    const left = idxLatestFlag - d;
+    if (left >= 0 && isCustomerIdHeader(headers[left])) return left;
+  }
+
+  // Fallback: try right side
+  for (let d = 1; d <= 30; d++) {
+    const right = idxLatestFlag + d;
+    if (right < headers.length && isCustomerIdHeader(headers[right])) return right;
+  }
+
+  return null;
 }
 
 // =============================================================
-// BUILD ENTITIES (two-pass join)
+// MAIN (Impact_Map_Export_3.0 format)
 // =============================================================
 async function buildEntitiesFromCSV() {
+  // 👇 change this to your new file name in the repo
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
@@ -352,99 +374,166 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  const headers = rows[0].map((h) =>
-    String(h).replace("\ufeff", "").trim().toLowerCase()
-  );
+  // New CSV layout (0-based indices)
+  // A–F Installed Systems table
+  const IDX_INST_CUST_ID = 0;  // A
+  const IDX_INST_STATUS  = 4;  // E ("Installed")
 
-  const idxCoordinates = headers.indexOf("coordinates");
-  if (idxCoordinates === -1) {
-    console.error('CSV missing required column header: "Coordinates"');
-    console.log("Headers found:", headers);
-    return;
-  }
+  // I–L Population table
+  const IDX_POP_CUST_ID  = 8;  // I
+  const IDX_POP_YEAR     = 9;  // J
+  const IDX_POP_VALUE    = 10; // K
 
-  // Fixed column positions (0-based)
-  const IDX_A = 0;   // A: Customer ID (site)
-  const IDX_B = 1;   // B: Customer Name (site)
-  const IDX_AB = 27; // AB: Customer ID (population section)
-  const IDX_AI = 34; // AI: Latest-year flag
-  const IDX_AJ = 35; // AJ: Population number
+  // O–Q Locations table
+  const IDX_LOC_ID       = 14; // O
+  const IDX_LOC_COORDS   = 16; // Q (Coordinates)
+
+  // S–V Customers table
+  const IDX_CUST_ID      = 18; // S
+  const IDX_CUST_NAME    = 19; // T
+  const IDX_CUST_LOC_ID  = 21; // V
 
   // Reset
   viewer.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
-  // PASS 1: population map from AB/AI/AJ across ALL rows (even far down)
-  const popById = new Map();
+  // -------------------------------------------------------------
+  // PASS 0: Collect Installed Customer IDs (from Systems table)
+  // -------------------------------------------------------------
+  const installedIds = new Set();
 
-  let popCandidates = 0;
-  let popKept = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
 
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
+    const custIdNum = toNum(row[IDX_INST_CUST_ID]);
+    if (custIdNum == null) continue;
 
-    const popId = normalizeId(r[IDX_AB]);
-    if (!popId) continue;
+    const status = String(row[IDX_INST_STATUS] ?? "").trim().toLowerCase();
+    if (status !== "installed") continue;
 
-    popCandidates++;
+    installedIds.add(String(Math.trunc(custIdNum)));
+  }
 
-    const isLatest = parseBool(r[IDX_AI]);
-    if (!isLatest) continue;
+  console.log("Installed customer IDs:", installedIds.size);
 
-    const pop = toNum(r[IDX_AJ]);
-    if (pop == null) continue;
+  // -------------------------------------------------------------
+  // PASS 1: Build latest population per Customer ID
+  // -------------------------------------------------------------
+  // Keep the max year row per customer. If tie, keep the bigger population.
+  const popById = new Map(); // id -> {year, pop}
 
-    const prev = popById.get(popId);
-    // if multiple TRUE rows exist, keep the largest pop (safer)
-    if (prev == null || pop > prev) {
-      popById.set(popId, pop);
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+
+    const idNum = toNum(row[IDX_POP_CUST_ID]);
+    const yearNum = toNum(row[IDX_POP_YEAR]);
+    const popNum = toNum(row[IDX_POP_VALUE]);
+
+    if (idNum == null || yearNum == null || popNum == null) continue;
+
+    const id = String(Math.trunc(idNum));
+    const year = Math.trunc(yearNum);
+    const pop = popNum;
+
+    const prev = popById.get(id);
+    if (!prev || year > prev.year || (year === prev.year && pop > prev.pop)) {
+      popById.set(id, { year, pop });
     }
   }
 
-  popKept = popById.size;
+  console.log("Population IDs with data:", popById.size);
 
-  console.log("Population rows seen (AB non-empty):", popCandidates);
-  console.log("Population IDs kept (AI==TRUE):", popKept);
+  // -------------------------------------------------------------
+  // PASS 2: Build coordinates by Loc ID
+  // -------------------------------------------------------------
+  const coordsByLocId = new Map(); // locId -> {lat, lon}
 
-  // PASS 2: site rows from A/B + Coordinates, then join population by ID
-  let sitesSeen = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+
+    const locIdNum = toNum(row[IDX_LOC_ID]);
+    if (locIdNum == null) continue;
+
+    const coord = parseCoordinatesLatLon(row[IDX_LOC_COORDS]);
+    if (!coord) continue;
+
+    const locId = String(Math.trunc(locIdNum));
+    coordsByLocId.set(locId, coord);
+  }
+
+  console.log("Locations with coords:", coordsByLocId.size);
+
+  // -------------------------------------------------------------
+  // PASS 3: Build customer name + locId by Customer ID
+  // -------------------------------------------------------------
+  const customerById = new Map(); // id -> {name, locId}
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+
+    const idNum = toNum(row[IDX_CUST_ID]);
+    if (idNum == null) continue;
+
+    const name = String(row[IDX_CUST_NAME] ?? "").trim();
+    const locIdNum = toNum(row[IDX_CUST_LOC_ID]);
+
+    if (!name || locIdNum == null) continue;
+
+    const id = String(Math.trunc(idNum));
+    const locId = String(Math.trunc(locIdNum));
+
+    // first good one wins (or you can overwrite if you prefer)
+    if (!customerById.has(id)) {
+      customerById.set(id, { name, locId });
+    }
+  }
+
+  console.log("Customers with name+loc:", customerById.size);
+
+  // -------------------------------------------------------------
+  // PASS 4: Plot ONLY installed customers that have coords + pop
+  // -------------------------------------------------------------
   let plotted = 0;
-  let missingPop = 0;
+  let missingCustomer = 0;
   let missingCoords = 0;
+  let missingPop = 0;
 
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
+  for (const id of installedIds) {
+    const cust = customerById.get(id);
+    if (!cust) {
+      missingCustomer++;
+      continue;
+    }
 
-    const siteId = normalizeId(r[IDX_A]);
-    const name = String(r[IDX_B] ?? "").trim();
-
-    // treat as "site row" only if it has both A and B
-    if (!siteId || !name) continue;
-    sitesSeen++;
-
-    const coord = parseCoordinatesLatLon(r[idxCoordinates]);
+    const coord = coordsByLocId.get(cust.locId);
     if (!coord) {
       missingCoords++;
       continue;
     }
 
-    const pop = popById.get(siteId);
-    if (pop == null) {
+    const popRec = popById.get(id);
+    if (!popRec || popRec.pop == null) {
       missingPop++;
-      continue; // only plot when we have latest-year population
+      continue;
     }
+
+    const pop = popRec.pop;
     if (pop <= 0) continue;
 
     const { lat, lon } = coord;
 
+    const labelText = `${cust.name}\nPopulation served: ${fmtInt(pop)}`;
+
     const entity = viewer.entities.add({
-      name,
+      name: cust.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
       properties: {
+        customerId: id,
         population: pop,
-        customerId: siteId,
+        year: popRec.year,
+        locId: cust.locId,
       },
 
       point: {
@@ -465,32 +554,39 @@ async function buildEntitiesFromCSV() {
       },
 
       label: {
-        text: `${name}\n${fmtInt(pop)}`,
+        text: labelText,
         font: "bold 18px sans-serif",
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 5,
         showBackground: true,
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        pixelOffset: new Cesium.Cartesian2(0, -44),
+        pixelOffset: new Cesium.Cartesian2(0, -40),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_500_000),
       },
     });
 
     entities.push(entity);
-    siteItems.push({ name, customerId: siteId, lat, lon, population: pop, entity });
+    siteItems.push({
+      name: cust.name,
+      customerId: id,
+      lat,
+      lon,
+      population: pop,
+      entity,
+    });
+
     plotted++;
   }
 
-  console.log("Site rows seen (A+B present):", sitesSeen);
-  console.log("Plotted sites:", plotted);
-  console.log("Skipped (missing coords):", missingCoords);
-  console.log("Skipped (missing pop match A->AB latest):", missingPop);
+  console.log("Plotted installed sites:", plotted);
+  console.log("Missing customer row:", missingCustomer);
+  console.log("Missing coords:", missingCoords);
+  console.log("Missing population:", missingPop);
 }
-
 // =============================================================
-// SIDEBAR UI
+// SIDEBAR
 // =============================================================
 function flyToSite(entity) {
   autoAdvance = false;
@@ -503,6 +599,7 @@ function flyToSite(entity) {
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
   const pos = entity.position.getValue(Cesium.JulianDate.now());
+
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 1.2,
     offset: new Cesium.HeadingPitchRange(
@@ -532,10 +629,16 @@ function renderSiteList(filterText = "") {
   filtered.forEach((s) => {
     const row = document.createElement("div");
     row.className = "siteRow";
+
+    const popLine =
+      s.population == null
+        ? `<div class="siteSub">Pop: (missing)</div>`
+        : `<div class="siteSub">Pop: ${fmtInt(s.population)}</div>`;
+
     row.innerHTML = `
       <div>${s.name}</div>
       <div class="siteSub">ID: ${s.customerId}</div>
-      <div class="siteSub">Pop: ${fmtInt(s.population)}</div>
+      ${popLine}
     `;
 
     row.addEventListener("click", (e) => {
@@ -554,7 +657,7 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// DOUBLE CLICK + HARD UNLOCK
+// DOUBLE CLICK
 // =============================================================
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
@@ -577,6 +680,9 @@ safeClickHandler.setInputAction((movement) => {
   flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
+// =============================================================
+// HARD UNLOCK ON USER INPUT
+// =============================================================
 canvas.addEventListener(
   "pointerdown",
   (e) => {
@@ -736,20 +842,6 @@ window.addEventListener(
 })();
 
 // =============================================================
-// Help box close button
-// =============================================================
-(function wireHelpCloseButton() {
-  const help = document.getElementById("controlsHelp");
-  const closeBtn = document.getElementById("helpCloseBtn");
-  if (!help || !closeBtn) return;
-
-  closeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    help.classList.add("controlsHelpHidden");
-  });
-})();
-
-// =============================================================
 // START
 // =============================================================
 (async function init() {
@@ -759,7 +851,7 @@ window.addEventListener(
   renderSiteList();
 
   if (entities.length === 0) {
-    console.warn("No sites loaded; nothing to show.");
+    console.warn("No coordinate sites found to show.");
     return;
   }
 
