@@ -70,7 +70,7 @@ const noClusterAtOrBelowMeters = 5000;
 
 // “Full strength” merge value when zoomed out
 // Bigger = clusters merge sooner/more (helps prevent “two bubbles side-by-side”)
-const clusterPixelRangeFar = 200; // <-- YOU TUNE THIS (try 120–200)
+const clusterPixelRangeFar = 300; // <-- YOU TUNE THIS (try 120–200)
 
 // Minimum cluster size
 const clusterMinSize = 2;
@@ -86,7 +86,7 @@ const clusterMaxPixelRange = 220;
 
 // If true, we force an immediate recluster when pixelRange changes.
 // If you see flicker, set to false (Cesium often updates fine without toggling).
-const forceReclusterOnPixelRangeChange = true;
+const forceReclusterOnPixelRangeChange = false;
 
 // ---- Site label fade (near only) ----
 const siteLabelNear = 0;       // fully visible at 1200m
