@@ -66,7 +66,7 @@ let autoAdvance = true;
 
 // HARD RULE: no clusters at/under this camera height
 // (You can set this to 2000 if you want the hard cutoff tighter)
-const noClusterAtOrBelowMeters = 5000;
+const noClusterAtOrBelowMeters = 10000;
 
 // “Full strength” merge value when zoomed out
 // Bigger = clusters merge sooner/more (helps prevent “two bubbles side-by-side”)
