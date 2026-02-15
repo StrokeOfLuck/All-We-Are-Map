@@ -1,20 +1,13 @@
 // =============================================================
-// FULL WORKING SCRIPT (AUTO TOUR + SIDEBAR + DOUBLE-CLICK + MANUAL CLUSTERING)
+// FULL WORKING SCRIPT (YOUR TOUR/UI + MANUAL CLUSTERING)
 // Data format: Impact_Map_Export - Sheet1.csv
-//
-// What you get:
+// Features:
 // 1) Filters to Installed systems only
-// 2) Joins Customer -> Location -> Population (latest year; population can be missing)
-// 3) Plots sites (pins + labels) using a DataSource (so tour can target entities reliably)
-// 4) Manual clustering overlay that merges/de-merges while you zoom AND while auto-tour flies
-//    - Below CLUSTER_MODE_MIN_HEIGHT: show pins
-//    - Between: show grid clusters (bubbles)
-//    - Above FULL_MERGE_MIN_HEIGHT: show ONE mega bubble
-// 5) Double click on:
-//    - Pin => fly to site
-//    - Cluster bubble => zoom toward that bubble (to “break it apart”)
-//
-// Your controls are in the "MERGE CONTROLS" section.
+// 2) Joins Customer -> Location -> Population (latest year)
+// 3) Plots sites
+// 4) Manual clustering when zoomed out (NO Cesium clustering)
+//    Cluster bubble shows: count of sites + total population
+// 5) Keeps your auto tour, sidebar, keyboard shortcuts, double click
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -43,7 +36,7 @@ viewer.imageryLayers.addImageryProvider(
 );
 
 // =============================================================
-// KNOBS (AUTO TOUR)
+// TOUR KNOBS (yours)
 // =============================================================
 const overviewRangeMeters = 1300000;
 const siteRangeMeters = 1200;
@@ -62,42 +55,28 @@ const flatPitchDeg = -90;
 let autoAdvance = true;
 
 // =============================================================
-// MERGE CONTROLS (MANUAL CLUSTERING)
+// MANUAL CLUSTER KNOBS (your merge controls)
 // =============================================================
 const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
-// Below this camera height: show individual pins
+// Below this camera height => show pins
 const CLUSTER_MODE_MIN_HEIGHT = 15_000;
 
-// Above this camera height: force ONE mega bubble
+// Above this height => force ONE mega bubble
 const FULL_MERGE_MIN_HEIGHT = 1_500_000;
 
-// Grid clustering aggressiveness (between the heights above)
-const GRID_DEG_NEAR = 0.15; // less merging (smaller grid)
-const GRID_DEG_FAR = 2.50;  // more merging (bigger grid)
+// Between those heights => ramp grid size (bigger grid = more merging)
+const GRID_DEG_NEAR = 0.15;
+const GRID_DEG_FAR = 2.50;
 
 const CLUSTER_MIN_SCALE = 1.0;
 const CLUSTER_MAX_SCALE = 2.2;
 
-// How often clustering refreshes during camera motion (smaller = more “live”)
-const CLUSTER_REFRESH_DEBOUNCE_MS = 60;
-
 // =============================================================
-// DATA SOURCES
+// DATA + STATE (yours)
 // =============================================================
-// Pins live here (tour targets these entities)
-const sitesDS = new Cesium.CustomDataSource("sites");
-viewer.dataSources.add(sitesDS);
-
-// Clusters live here (visual overlay only)
-const clusterDS = new Cesium.CustomDataSource("clusters");
-viewer.dataSources.add(clusterDS);
-
-// =============================================================
-// DATA + STATE
-// =============================================================
-const entities = [];   // pin entities in tour order
-const siteItems = [];  // for sidebar: { name, customerId, lat, lon, population|null, entity }
+const entities = []; // site entities (pins) used by tour
+const siteItems = []; // sidebar list: { name, customerId, lat, lon, population, entity }
 
 let activeIndex = 0;
 let orbit = false;
@@ -107,11 +86,22 @@ let isFlying = false;
 
 let tourRunId = 0;
 
-// Canonical site dataset (used to build clusters quickly)
-const sites = []; // {id,name,lat,lon,pop|null,locId,year|null}
+// NEW: canonical site data for clustering
+const sites = []; // {id,name,lat,lon,pop,year,locId}
 
 // =============================================================
-// UTIL
+// DATA SOURCES
+// - sitesDS holds pins (your normal entities)
+// - clusterDS holds cluster bubbles
+// =============================================================
+const sitesDS = new Cesium.CustomDataSource("sites");
+viewer.dataSources.add(sitesDS);
+
+const clusterDS = new Cesium.CustomDataSource("clusters");
+viewer.dataSources.add(clusterDS);
+
+// =============================================================
+// CLUSTER BUBBLE IMAGE
 // =============================================================
 function clamp(x, a, b) {
   return Math.max(a, Math.min(b, x));
@@ -123,73 +113,12 @@ function fmtInt(n) {
   const x = Math.round(Number(n) || 0);
   return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
-function toNum(x) {
-  if (x == null) return null;
-  const s = String(x).replace(/\u00A0/g, " ").trim().replace(/,/g, "");
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-function parseCoordinatesLatLon(coordStr) {
-  if (!coordStr) return null;
-  const parts = String(coordStr)
-    .replace(/^"+|"+$/g, "")
-    .split(",")
-    .map((s) => s.trim());
-  if (parts.length < 2) return null;
-  const lat = toNum(parts[0]);
-  const lon = toNum(parts[1]);
-  if (lat == null || lon == null) return null;
-  return { lat, lon };
-}
-function parseCSV(text) {
-  const rows = [];
-  let row = [];
-  let cur = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (ch === '"' && inQuotes && next === '"') {
-      cur += '"';
-      i++;
-      continue;
-    }
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (ch === "," && !inQuotes) {
-      row.push(cur);
-      cur = "";
-      continue;
-    }
-    if ((ch === "\n" || ch === "\r") && !inQuotes) {
-      if (ch === "\r" && next === "\n") i++;
-      row.push(cur);
-      cur = "";
-      if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-      row = [];
-      continue;
-    }
-    cur += ch;
-  }
-
-  row.push(cur);
-  if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
-  return rows;
-}
-
-function popToPixelSize(pop) {
-  if (pop == null) return 10;
-  const p = Math.max(0, Number(pop) || 0);
-  const size = 6 + Math.log10(Math.max(p, 1)) * 6;
-  return clamp(size, 6, 34);
-}
-
-function bubbleSvgDataUrl(diameter = 72) {
+function makeClusterBubbleDataUrl({
+  diameter = 72,
+  fill = "rgba(255,215,0,0.95)",
+  stroke = "rgba(0,0,0,0.85)",
+  strokeWidth = 4,
+} = {}) {
   const r = diameter / 2;
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${diameter}" height="${diameter}" viewBox="0 0 ${diameter} ${diameter}">
@@ -198,20 +127,15 @@ function bubbleSvgDataUrl(diameter = 72) {
           <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.35)"/>
         </filter>
       </defs>
-      <circle cx="${r}" cy="${r}" r="${r - 4}" fill="rgba(255,215,0,0.95)" stroke="rgba(0,0,0,0.85)" stroke-width="4" filter="url(#s)"/>
+      <circle cx="${r}" cy="${r}" r="${r - strokeWidth}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" filter="url(#s)"/>
     </svg>
   `.trim();
   return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
 }
-const CLUSTER_BUBBLE = bubbleSvgDataUrl(72);
-
-function gridSizeDegForHeight(h) {
-  const t = clamp((h - CLUSTER_MODE_MIN_HEIGHT) / (FULL_MERGE_MIN_HEIGHT - CLUSTER_MODE_MIN_HEIGHT), 0, 1);
-  return lerp(GRID_DEG_NEAR, GRID_DEG_FAR, t);
-}
+const CLUSTER_BUBBLE_URL = makeClusterBubbleDataUrl({ diameter: 72 });
 
 // =============================================================
-// TOUR HELPERS
+// TOUR HELPERS (yours)
 // =============================================================
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -245,6 +169,9 @@ function hardUnlockCamera() {
   viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   canvas.focus();
   updateTourButton();
+
+  // allow clustering again after user takes control
+  requestClusterRefresh();
 }
 
 function flyToRange({ rangeMeters, pitchDeg, headingDegValue, durationSec }) {
@@ -342,6 +269,10 @@ viewer.clock.onTick.addEventListener(() => {
 async function runTourGuarded() {
   const myId = ++tourRunId;
 
+  // TOUR MUST SEE PINS (never clusters)
+  sitesDS.show = true;
+  clusterDS.show = false;
+
   while (autoAdvance && myId === tourRunId && entities.length > 0) {
     await goAboveSiteFlat();
     if (!autoAdvance || myId !== tourRunId) break;
@@ -366,6 +297,9 @@ async function runTourGuarded() {
 
     activeIndex = (activeIndex + 1) % entities.length;
   }
+
+  // when tour ends, allow clustering again
+  requestClusterRefresh();
 }
 
 function toggleAutoTour() {
@@ -376,209 +310,101 @@ function toggleAutoTour() {
   } else {
     orbit = false;
     tourRunId++;
+    requestClusterRefresh();
   }
 
   updateTourButton();
 }
 
 // =============================================================
-// DATA LOAD + PIN BUILD
+// CSV HELPERS (yours)
 // =============================================================
-async function loadSitesFromCSV() {
-  const res = await fetch(encodeURI(CSV_URL));
-  if (!res.ok) throw new Error(`Failed to fetch ${CSV_URL}: ${res.status} ${res.statusText}`);
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cur = "";
+  let inQuotes = false;
 
-  const text = await res.text();
-  const rows = parseCSV(text);
-  if (rows.length < 2) return [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
 
-  // Indices (0-based) for your export
-  const IDX_INST_CUST_ID = 0;  // A
-  const IDX_INST_STATUS = 4;   // E
-
-  const IDX_POP_CUST_ID = 8;   // I
-  const IDX_POP_YEAR = 9;      // J
-  const IDX_POP_VALUE = 10;    // K
-
-  const IDX_LOC_ID = 14;       // O
-  const IDX_LOC_COORDS = 16;   // Q
-
-  const IDX_CUST_ID = 18;      // S
-  const IDX_CUST_NAME = 19;    // T
-  const IDX_CUST_LOC_ID = 21;  // V
-
-  // Installed IDs
-  const installedIds = new Set();
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const custIdNum = toNum(row[IDX_INST_CUST_ID]);
-    if (custIdNum == null) continue;
-
-    const status = String(row[IDX_INST_STATUS] ?? "").trim().toLowerCase();
-    if (status === "installed") installedIds.add(String(Math.trunc(custIdNum)));
-  }
-
-  // Latest population (may be missing for some)
-  const popById = new Map(); // id -> {year,pop}
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const idNum = toNum(row[IDX_POP_CUST_ID]);
-    const yearNum = toNum(row[IDX_POP_YEAR]);
-    const popNum = toNum(row[IDX_POP_VALUE]);
-    if (idNum == null || yearNum == null || popNum == null) continue;
-
-    const id = String(Math.trunc(idNum));
-    const year = Math.trunc(yearNum);
-    const pop = popNum;
-
-    const prev = popById.get(id);
-    if (!prev || year > prev.year || (year === prev.year && pop > prev.pop)) {
-      popById.set(id, { year, pop });
+    if (ch === '"' && inQuotes && next === '"') {
+      cur += '"';
+      i++;
+      continue;
     }
-  }
-
-  // Coords by locId
-  const coordsByLocId = new Map();
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const locIdNum = toNum(row[IDX_LOC_ID]);
-    if (locIdNum == null) continue;
-
-    const coord = parseCoordinatesLatLon(row[IDX_LOC_COORDS]);
-    if (!coord) continue;
-
-    coordsByLocId.set(String(Math.trunc(locIdNum)), coord);
-  }
-
-  // Customer by id
-  const customerById = new Map(); // id -> {name,locId}
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const idNum = toNum(row[IDX_CUST_ID]);
-    if (idNum == null) continue;
-
-    const name = String(row[IDX_CUST_NAME] ?? "").trim();
-    const locIdNum = toNum(row[IDX_CUST_LOC_ID]);
-    if (!name || locIdNum == null) continue;
-
-    const id = String(Math.trunc(idNum));
-    if (!customerById.has(id)) {
-      customerById.set(id, { name, locId: String(Math.trunc(locIdNum)) });
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
     }
+    if (ch === "," && !inQuotes) {
+      row.push(cur);
+      cur = "";
+      continue;
+    }
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (ch === "\r" && next === "\n") i++;
+      row.push(cur);
+      cur = "";
+      if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
+      row = [];
+      continue;
+    }
+    cur += ch;
   }
 
-  // Final sites: installed + has customer row + has coords (population optional)
-  const out = [];
-  for (const id of installedIds) {
-    const cust = customerById.get(id);
-    if (!cust) continue;
-
-    const coord = coordsByLocId.get(cust.locId);
-    if (!coord) continue;
-
-    const popRec = popById.get(id);
-    const pop = popRec && Number.isFinite(popRec.pop) && popRec.pop > 0 ? popRec.pop : null;
-    const year = popRec ? popRec.year : null;
-
-    out.push({
-      id,
-      name: cust.name,
-      lat: coord.lat,
-      lon: coord.lon,
-      pop,
-      year,
-      locId: cust.locId,
-    });
-  }
-
-  console.log("Loaded sites (installed+coords+customer):", out.length);
-  return out;
+  row.push(cur);
+  if (row.some((v) => String(v).trim().length > 0)) rows.push(row);
+  return rows;
 }
 
-function clearAllPins() {
-  sitesDS.entities.removeAll();
-  entities.length = 0;
-  siteItems.length = 0;
+function toNum(x) {
+  if (x == null) return null;
+  const s = String(x).replace(/\u00A0/g, " ").trim().replace(/,/g, "");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
-function buildPinEntitiesFromSites() {
-  clearAllPins();
+function parseCoordinatesLatLon(coordStr) {
+  if (!coordStr) return null;
 
-  for (const s of sites) {
-    const popLabel = s.pop == null ? "Population served: (missing)" : `Population served: ${fmtInt(s.pop)}`;
-    const labelText = `${s.name}\n${popLabel}`;
+  const parts = String(coordStr)
+    .replace(/^"+|"+$/g, "")
+    .split(",")
+    .map((s) => s.trim());
 
-    const ent = sitesDS.entities.add({
-      name: s.name,
-      position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat),
-      properties: {
-        isCluster: false,
-        customerId: s.id,
-        population: s.pop,
-        year: s.year,
-        locId: s.locId,
-      },
+  if (parts.length < 2) return null;
 
-      point: {
-        pixelSize: popToPixelSize(s.pop),
-        color: Cesium.Color.YELLOW,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
+  const lat = toNum(parts[0]);
+  const lon = toNum(parts[1]);
+  if (lat == null || lon == null) return null;
 
-      billboard: {
-        image: "./icons/solar_pin.png",
-        width: 28,
-        height: 28,
-        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
-      },
+  return { lat, lon };
+}
 
-      label: {
-        text: labelText,
-        font: "bold 18px sans-serif",
-        fillColor: Cesium.Color.WHITE,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 5,
-        showBackground: true,
-        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        pixelOffset: new Cesium.Cartesian2(0, -40),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        translucencyByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
-        scaleByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
-      },
-    });
-
-    entities.push(ent);
-    siteItems.push({
-      name: s.name,
-      customerId: s.id,
-      lat: s.lat,
-      lon: s.lon,
-      population: s.pop,
-      entity: ent,
-    });
-  }
-
-  console.log("Pins built:", entities.length);
+function popToPixelSize(pop) {
+  if (pop == null) return 10;
+  const p = Math.max(0, Number(pop) || 0);
+  const size = 6 + Math.log10(Math.max(p, 1)) * 6;
+  return clamp(size, 6, 34);
 }
 
 // =============================================================
-// MANUAL CLUSTERING (OVERLAY)
+// MANUAL CLUSTERING CORE
 // =============================================================
-function setPinsVisualsEnabled(enabled) {
-  const now = Cesium.JulianDate.now();
-  for (const e of entities) {
-    if (e.billboard) e.billboard.show = enabled;
-    if (e.point) e.point.show = enabled;
-    if (e.label) e.label.show = enabled;
-  }
+function clearClusterEntities() {
+  clusterDS.entities.removeAll();
 }
 
-function buildClusters(gridDeg) {
-  const buckets = new Map(); // key -> bucket
+function gridSizeDegForHeight(h) {
+  const t = clamp((h - CLUSTER_MODE_MIN_HEIGHT) / (FULL_MERGE_MIN_HEIGHT - CLUSTER_MODE_MIN_HEIGHT), 0, 1);
+  return lerp(GRID_DEG_NEAR, GRID_DEG_FAR, t);
+}
+
+function buildGridClusters(gridDeg) {
+  const buckets = new Map(); // key -> {count,popSum,latSum,lonSum}
 
   for (const s of sites) {
     const gx = Math.floor(s.lon / gridDeg);
@@ -590,11 +416,10 @@ function buildClusters(gridDeg) {
       b = { count: 0, popSum: 0, latSum: 0, lonSum: 0 };
       buckets.set(key, b);
     }
-
     b.count++;
+    b.popSum += s.pop;
     b.latSum += s.lat;
     b.lonSum += s.lon;
-    if (s.pop != null && Number.isFinite(s.pop)) b.popSum += s.pop;
   }
 
   const clusters = [];
@@ -609,19 +434,15 @@ function buildClusters(gridDeg) {
   return clusters;
 }
 
-function clearClusters() {
-  clusterDS.entities.removeAll();
-}
-
 function renderGridClusters() {
-  clearClusters();
+  clearClusterEntities();
 
   const h = viewer.camera.positionCartographic.height;
   const gridDeg = gridSizeDegForHeight(h);
-  const clusters = buildClusters(gridDeg);
+  const clusters = buildGridClusters(gridDeg);
 
   for (const c of clusters) {
-    const sc = clamp(
+    const scale = clamp(
       1.0 + Math.log10(Math.max(c.count, 1)) * 0.35,
       CLUSTER_MIN_SCALE,
       CLUSTER_MAX_SCALE
@@ -631,17 +452,17 @@ function renderGridClusters() {
       position: Cesium.Cartesian3.fromDegrees(c.lon, c.lat),
       properties: {
         isCluster: true,
-        mega: false,
         count: c.count,
         popSum: c.popSum,
+        mega: false,
       },
       billboard: {
-        image: CLUSTER_BUBBLE,
+        image: CLUSTER_BUBBLE_URL,
         width: 56,
         height: 56,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scale: sc,
+        scale,
       },
       label: {
         text: `Sites: ${c.count}\nPop: ${fmtInt(c.popSum)}`,
@@ -652,7 +473,7 @@ function renderGridClusters() {
         showBackground: true,
         backgroundColor: new Cesium.Color(0, 0, 0, 0.35),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scale: sc,
+        scale,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         pixelOffset: new Cesium.Cartesian2(0, 0),
@@ -662,27 +483,27 @@ function renderGridClusters() {
 }
 
 function renderMegaCluster() {
-  clearClusters();
+  clearClusterEntities();
 
   let popSum = 0;
   let latSum = 0;
   let lonSum = 0;
 
   for (const s of sites) {
+    popSum += s.pop;
     latSum += s.lat;
     lonSum += s.lon;
-    if (s.pop != null && Number.isFinite(s.pop)) popSum += s.pop;
   }
 
   const count = sites.length;
-  const lat = latSum / Math.max(count, 1);
-  const lon = lonSum / Math.max(count, 1);
+  const lat = latSum / count;
+  const lon = lonSum / count;
 
   clusterDS.entities.add({
     position: Cesium.Cartesian3.fromDegrees(lon, lat),
-    properties: { isCluster: true, mega: true, count, popSum },
+    properties: { isCluster: true, count, popSum, mega: true },
     billboard: {
-      image: CLUSTER_BUBBLE,
+      image: CLUSTER_BUBBLE_URL,
       width: 64,
       height: 64,
       verticalOrigin: Cesium.VerticalOrigin.CENTER,
@@ -707,52 +528,252 @@ function renderMegaCluster() {
 }
 
 function refreshClusterMode() {
-  const h = viewer.camera.positionCartographic.height;
+  // If tour running or orbiting, NEVER hide pins (tour needs entities)
+  if (autoAdvance || orbit) {
+    sitesDS.show = true;
+    clusterDS.show = false;
+    return;
+  }
 
-  // Always keep pins present so auto-tour can fly to them.
-  sitesDS.show = true;
+  const h = viewer.camera.positionCartographic.height;
 
   if (h >= FULL_MERGE_MIN_HEIGHT) {
     renderMegaCluster();
+    sitesDS.show = false;
     clusterDS.show = true;
-    setPinsVisualsEnabled(false);
     return;
   }
 
   if (h >= CLUSTER_MODE_MIN_HEIGHT) {
     renderGridClusters();
+    sitesDS.show = false;
     clusterDS.show = true;
-    setPinsVisualsEnabled(false);
     return;
   }
 
   // Pins mode
+  sitesDS.show = true;
   clusterDS.show = false;
-  setPinsVisualsEnabled(true);
 }
 
-// Debounce refresh while panning/zooming/flying
-let refreshTimer = null;
+let clusterRefreshTimer = null;
 function requestClusterRefresh() {
-  if (refreshTimer) clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => {
-    refreshTimer = null;
+  if (clusterRefreshTimer) clearTimeout(clusterRefreshTimer);
+  clusterRefreshTimer = setTimeout(() => {
+    clusterRefreshTimer = null;
     refreshClusterMode();
-  }, CLUSTER_REFRESH_DEBOUNCE_MS);
+  }, 80);
 }
-
-// Keep clusters updating while camera moves (includes auto-tour flyTo)
-viewer.camera.changed.addEventListener(requestClusterRefresh);
-viewer.camera.moveEnd.addEventListener(requestClusterRefresh);
 
 // =============================================================
-// SIDEBAR
+// MAIN (your original loader, plus fills `sites[]` for clustering)
+// =============================================================
+async function buildEntitiesFromCSV() {
+  const res = await fetch(encodeURI(CSV_URL));
+  if (!res.ok) {
+    console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
+    return;
+  }
+
+  const text = await res.text();
+  const rows = parseCSV(text);
+  if (rows.length < 2) {
+    console.warn(`${CSV_URL} has no data rows.`);
+    return;
+  }
+
+  // Layout indices (0-based)
+  const IDX_INST_CUST_ID = 0; // A
+  const IDX_INST_STATUS = 4;  // E
+
+  const IDX_POP_CUST_ID = 8;  // I
+  const IDX_POP_YEAR = 9;     // J
+  const IDX_POP_VALUE = 10;   // K
+
+  const IDX_LOC_ID = 14;      // O
+  const IDX_LOC_COORDS = 16;  // Q
+
+  const IDX_CUST_ID = 18;     // S
+  const IDX_CUST_NAME = 19;   // T
+  const IDX_CUST_LOC_ID = 21; // V
+
+  // Reset
+  sitesDS.entities.removeAll();
+  clusterDS.entities.removeAll();
+  entities.length = 0;
+  siteItems.length = 0;
+  sites.length = 0;
+
+  // PASS 0: Installed IDs
+  const installedIds = new Set();
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const custIdNum = toNum(row[IDX_INST_CUST_ID]);
+    if (custIdNum == null) continue;
+    const status = String(row[IDX_INST_STATUS] ?? "").trim().toLowerCase();
+    if (status === "installed") installedIds.add(String(Math.trunc(custIdNum)));
+  }
+
+  // PASS 1: latest population per customer
+  const popById = new Map(); // id -> {year,pop}
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const idNum = toNum(row[IDX_POP_CUST_ID]);
+    const yearNum = toNum(row[IDX_POP_YEAR]);
+    const popNum = toNum(row[IDX_POP_VALUE]);
+    if (idNum == null || yearNum == null || popNum == null) continue;
+
+    const id = String(Math.trunc(idNum));
+    const year = Math.trunc(yearNum);
+    const pop = popNum;
+
+    const prev = popById.get(id);
+    if (!prev || year > prev.year || (year === prev.year && pop > prev.pop)) {
+      popById.set(id, { year, pop });
+    }
+  }
+
+  // PASS 2: coords by locId
+  const coordsByLocId = new Map();
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const locIdNum = toNum(row[IDX_LOC_ID]);
+    if (locIdNum == null) continue;
+    const coord = parseCoordinatesLatLon(row[IDX_LOC_COORDS]);
+    if (!coord) continue;
+    coordsByLocId.set(String(Math.trunc(locIdNum)), coord);
+  }
+
+  // PASS 3: customerById
+  const customerById = new Map(); // id -> {name,locId}
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const idNum = toNum(row[IDX_CUST_ID]);
+    if (idNum == null) continue;
+
+    const name = String(row[IDX_CUST_NAME] ?? "").trim();
+    const locIdNum = toNum(row[IDX_CUST_LOC_ID]);
+    if (!name || locIdNum == null) continue;
+
+    const id = String(Math.trunc(idNum));
+    if (!customerById.has(id)) {
+      customerById.set(id, { name, locId: String(Math.trunc(locIdNum)) });
+    }
+  }
+
+  // PASS 4: plot pins + also fill `sites[]`
+  let plotted = 0;
+  let missingCustomer = 0;
+  let missingCoords = 0;
+  let missingPop = 0;
+
+  for (const id of installedIds) {
+    const cust = customerById.get(id);
+    if (!cust) {
+      missingCustomer++;
+      continue;
+    }
+
+    const coord = coordsByLocId.get(cust.locId);
+    if (!coord) {
+      missingCoords++;
+      continue;
+    }
+
+    const popRec = popById.get(id);
+    if (!popRec || popRec.pop == null || popRec.pop <= 0) {
+      missingPop++;
+      continue;
+    }
+
+    const { lat, lon } = coord;
+    const pop = popRec.pop;
+
+    // canonical record for clustering
+    sites.push({
+      id,
+      name: cust.name,
+      lat,
+      lon,
+      pop,
+      year: popRec.year,
+      locId: cust.locId,
+    });
+
+    const labelText = `${cust.name}\nPopulation served: ${fmtInt(pop)}`;
+
+    const entity = sitesDS.entities.add({
+      name: cust.name,
+      position: Cesium.Cartesian3.fromDegrees(lon, lat),
+      properties: {
+        customerId: id,
+        population: pop,
+        year: popRec.year,
+        locId: cust.locId,
+        isCluster: false,
+      },
+      point: {
+        pixelSize: popToPixelSize(pop),
+        color: Cesium.Color.YELLOW,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      billboard: {
+        image: "./icons/solar_pin.png",
+        width: 28,
+        height: 28,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(1_000.0, 1.0, 5_000_000.0, 0.4),
+      },
+      label: {
+        text: labelText,
+        font: "bold 18px sans-serif",
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 5,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+        pixelOffset: new Cesium.Cartesian2(0, -40),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        translucencyByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
+        scaleByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
+      },
+    });
+
+    entities.push(entity);
+    siteItems.push({
+      name: cust.name,
+      customerId: id,
+      lat,
+      lon,
+      population: pop,
+      entity,
+    });
+
+    plotted++;
+  }
+
+  console.log("Installed customer IDs:", installedIds.size);
+  console.log("Plotted installed sites:", plotted);
+  console.log("Missing customer row:", missingCustomer);
+  console.log("Missing coords:", missingCoords);
+  console.log("Missing population:", missingPop);
+}
+
+// =============================================================
+// SIDEBAR (yours)
 // =============================================================
 function flyToSite(entity) {
   autoAdvance = false;
   orbit = false;
   tourRunId++;
   updateTourButton();
+
+  // when user picks a site, make sure pins are visible
+  sitesDS.show = true;
+  clusterDS.show = false;
 
   setActiveIndexFromEntity(entity);
 
@@ -793,10 +814,7 @@ function renderSiteList(filterText = "") {
     const row = document.createElement("div");
     row.className = "siteRow";
 
-    const popLine =
-      s.population == null
-        ? `<div class="siteSub">Pop: (missing)</div>`
-        : `<div class="siteSub">Pop: ${fmtInt(s.population)}</div>`;
+    const popLine = `<div class="siteSub">Pop: ${fmtInt(s.population)}</div>`;
 
     row.innerHTML = `
       <div>${s.name}</div>
@@ -820,7 +838,7 @@ function wireSearchBox() {
 }
 
 // =============================================================
-// DOUBLE CLICK (Pin => fly, Cluster => zoom-in)
+// DOUBLE CLICK (yours, upgraded to also zoom clusters)
 // =============================================================
 viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
   Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
@@ -831,22 +849,20 @@ const DOUBLE_CLICK_MS = 320;
 
 const safeClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 safeClickHandler.setInputAction((movement) => {
-  const nowT = performance.now();
-  const isDouble = nowT - lastClickAt < DOUBLE_CLICK_MS;
-  lastClickAt = nowT;
+  const nowPerf = performance.now();
+  const isDouble = nowPerf - lastClickAt < DOUBLE_CLICK_MS;
+  lastClickAt = nowPerf;
 
   if (!isDouble) return;
 
   const picked = viewer.scene.pick(movement.position);
-  if (!picked || !picked.id) return;
+  if (!picked || !picked.id || !picked.id.position) return;
 
-  const ent = picked.id;
   const now = Cesium.JulianDate.now();
-  const isCluster = ent.properties?.isCluster?.getValue?.(now);
+  const isCluster = picked.id.properties?.isCluster?.getValue?.(now);
 
   if (isCluster) {
-    // Zoom toward cluster to break it apart
-    const pos = ent.position.getValue(now);
+    const pos = picked.id.position.getValue(now);
     viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
       duration: 0.9,
       offset: new Cesium.HeadingPitchRange(
@@ -854,17 +870,40 @@ safeClickHandler.setInputAction((movement) => {
         Cesium.Math.toRadians(-60),
         Math.max(35_000, viewer.camera.positionCartographic.height * 0.35)
       ),
-      complete: requestClusterRefresh,
+      complete: () => requestClusterRefresh(),
     });
     return;
   }
 
-  // Pin
-  if (ent.position) flyToSite(ent);
+  flyToSite(picked.id);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
 // =============================================================
-// HARD UNLOCK ON USER INPUT
+// SINGLE CLICK: cluster click zooms in (doesn't interfere with sidebar clicks)
+// =============================================================
+const clusterClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+clusterClickHandler.setInputAction((movement) => {
+  const picked = viewer.scene.pick(movement.position);
+  if (!picked || !picked.id || !picked.id.position) return;
+
+  const now = Cesium.JulianDate.now();
+  const isCluster = picked.id.properties?.isCluster?.getValue?.(now);
+  if (!isCluster) return;
+
+  const pos = picked.id.position.getValue(now);
+  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
+    duration: 0.8,
+    offset: new Cesium.HeadingPitchRange(
+      Cesium.Math.toRadians(0),
+      Cesium.Math.toRadians(-60),
+      Math.max(35_000, viewer.camera.positionCartographic.height * 0.35)
+    ),
+    complete: () => requestClusterRefresh(),
+  });
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+// =============================================================
+// HARD UNLOCK ON USER INPUT (yours)
 // =============================================================
 canvas.addEventListener(
   "pointerdown",
@@ -894,7 +933,7 @@ canvas.addEventListener(
 );
 
 // =============================================================
-// KEYBOARD SHORTCUTS
+// KEYBOARD SHORTCUTS (yours)
 // =============================================================
 window.addEventListener(
   "keydown",
@@ -926,6 +965,10 @@ window.addEventListener(
       orbit = false;
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
+      // ensure pins visible
+      sitesDS.show = true;
+      clusterDS.show = false;
+
       await zoomDownFlat();
       await tiltIntoOrbitPitch();
       headingDeg = 0;
@@ -940,6 +983,9 @@ window.addEventListener(
       orbit = false;
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
+      sitesDS.show = true;
+      clusterDS.show = false;
+
       activeIndex = (activeIndex + 1) % entities.length;
       await goAboveSiteFlat();
       await zoomDownFlat();
@@ -952,6 +998,9 @@ window.addEventListener(
       autoAdvance = false;
       orbit = false;
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+      sitesDS.show = true;
+      clusterDS.show = false;
 
       activeIndex = (activeIndex - 1 + entities.length) % entities.length;
       await goAboveSiteFlat();
@@ -974,7 +1023,7 @@ window.addEventListener(
 );
 
 // =============================================================
-// Floating controls
+// Floating controls (yours)
 // =============================================================
 (function wireFloatingControls() {
   const sidebar = document.getElementById("sidebar");
@@ -1025,33 +1074,31 @@ window.addEventListener(
 })();
 
 // =============================================================
+// CLUSTER MODE REFRESH HOOKS
+// =============================================================
+viewer.camera.moveEnd.addEventListener(requestClusterRefresh);
+viewer.camera.changed.addEventListener(requestClusterRefresh);
+
+// =============================================================
 // START
 // =============================================================
 (async function init() {
-  try {
-    const loaded = await loadSitesFromCSV();
-    sites.length = 0;
-    sites.push(...loaded);
+  await buildEntitiesFromCSV();
 
-    if (sites.length === 0) {
-      console.warn("No sites loaded.");
-      return;
-    }
+  wireSearchBox();
+  renderSiteList();
 
-    buildPinEntitiesFromSites();
-
-    wireSearchBox();
-    renderSiteList();
-
-    // Zoom to pins (cluster overlay will switch itself based on height)
-    viewer.zoomTo(sitesDS.entities);
-
-    // One immediate refresh so it chooses correct mode for your starting view
-    refreshClusterMode();
-
-    autoAdvance = true;
-    runTourGuarded();
-  } catch (e) {
-    console.error(e);
+  if (entities.length === 0) {
+    console.warn("No coordinate sites found to show.");
+    return;
   }
+
+  // zoom to pins
+  viewer.zoomTo(sitesDS.entities);
+
+  // pick the right mode for current height (pins vs clusters)
+  refreshClusterMode();
+
+  autoAdvance = true;
+  runTourGuarded();
 })();
