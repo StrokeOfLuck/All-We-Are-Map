@@ -60,7 +60,7 @@ let autoAdvance = true;
 const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
 // Below this camera height => show pins
-const CLUSTER_MODE_MIN_HEIGHT = 15_000;
+const CLUSTER_MODE_MIN_HEIGHT = 12_000;
 
 // Above this height => force ONE mega bubble
 const FULL_MERGE_MIN_HEIGHT = 1_000_000;
