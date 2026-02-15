@@ -1,10 +1,11 @@
 // =============================================================
-// NEW CLUSTERING APPROACH (manual clustering, no Cesium built-in)
-// - Always builds a clean sites[] list from your CSV
-// - On camera move, decides whether to show:
-//   A) individual sites (pins + labels)
-//   B) cluster bubbles (count + sum population)
-// - No DataSources, no clusterEvent, no doubling.
+// NEW CLUSTERING APPROACH (manual clustering, NO Cesium clustering)
+// Data: Impact_Map_Export - Sheet1.csv
+//
+// Controls you asked for:
+// 1) CLUSTER_MODE_MIN_HEIGHT = height where pins -> clusters
+// 2) FULL_MERGE_MIN_HEIGHT  = height where EVERYTHING -> 1 bubble
+// 3) GRID_*                 = how aggressively clusters merge between those heights
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -33,31 +34,33 @@ canvas.setAttribute("tabindex", "0");
 canvas.focus();
 
 // =============================================================
-// KNOBS
+// KNOBS (YOUR MERGE CONTROLS)
 // =============================================================
 const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
-// When camera is higher than this, show clusters instead of individual points
-const CLUSTER_MODE_MIN_HEIGHT = 120_000;
+// Below this height: show individual pins
+const CLUSTER_MODE_MIN_HEIGHT = 80_000;
 
-// Grid size in degrees controls how aggressively points merge
-// We interpolate this based on camera height
-const GRID_DEG_NEAR = 0.10; // about ~11km at equator
-const GRID_DEG_FAR  = 1.00; // about ~111km at equator
-const GRID_HEIGHT_NEAR = 120_000;
-const GRID_HEIGHT_FAR  = 2_500_000;
+// Above this height: force ONE mega bubble
+const FULL_MERGE_MIN_HEIGHT = 900_000;
 
-// cluster bubble scale based on count
+// Between those heights: grid clustering ramps from near -> far grid size
+const GRID_DEG_NEAR = 0.15;   // less merging (smaller grid)
+const GRID_DEG_FAR  = 2.50;   // more merging (bigger grid)
+
+const GRID_HEIGHT_NEAR = CLUSTER_MODE_MIN_HEIGHT;
+const GRID_HEIGHT_FAR  = FULL_MERGE_MIN_HEIGHT;
+
+// Bubble scaling based on count
 const CLUSTER_MIN_SCALE = 1.0;
 const CLUSTER_MAX_SCALE = 2.2;
 
 // =============================================================
 // STATE
 // =============================================================
-const sites = [];              // canonical dataset: {id,name,lat,lon,pop,locId,year}
-const siteEntities = [];       // Cesium entities for individual sites
-const clusterEntities = [];    // Cesium entities for cluster bubbles
-let showingClusters = false;
+const sites = [];           // canonical dataset: {id,name,lat,lon,pop,locId,year}
+const siteEntities = [];    // Cesium entities for individual sites
+const clusterEntities = []; // Cesium entities for cluster bubbles
 
 // =============================================================
 // UTIL
@@ -131,8 +134,34 @@ function parseCSV(text) {
   return rows;
 }
 
+function clearEntities(arr) {
+  for (const e of arr) viewer.entities.remove(e);
+  arr.length = 0;
+}
+
+function bubbleSvgDataUrl(diameter = 72) {
+  const r = diameter / 2;
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${diameter}" height="${diameter}" viewBox="0 0 ${diameter} ${diameter}">
+      <defs>
+        <filter id="s" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.35)"/>
+        </filter>
+      </defs>
+      <circle cx="${r}" cy="${r}" r="${r - 4}" fill="rgba(255,215,0,0.95)" stroke="rgba(0,0,0,0.85)" stroke-width="4" filter="url(#s)"/>
+    </svg>
+  `.trim();
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+}
+const CLUSTER_BUBBLE = bubbleSvgDataUrl(72);
+
+function gridSizeDegForHeight(h) {
+  const t = clamp((h - GRID_HEIGHT_NEAR) / (GRID_HEIGHT_FAR - GRID_HEIGHT_NEAR), 0, 1);
+  return lerp(GRID_DEG_NEAR, GRID_DEG_FAR, t);
+}
+
 // =============================================================
-// DATA LOAD (same joins as your script)
+// DATA LOAD (same joins as your original script)
 // =============================================================
 async function loadSitesFromCSV() {
   const res = await fetch(encodeURI(CSV_URL));
@@ -216,7 +245,7 @@ async function loadSitesFromCSV() {
     }
   }
 
-  // Final sites = installed AND has coords AND has pop AND has customer row
+  // Final sites: installed + has customer row + has coords + has pop
   const out = [];
   for (const id of installedIds) {
     const cust = customerById.get(id);
@@ -244,13 +273,8 @@ async function loadSitesFromCSV() {
 }
 
 // =============================================================
-// RENDER HELPERS
+// RENDER: INDIVIDUAL SITES
 // =============================================================
-function clearEntities(arr) {
-  for (const e of arr) viewer.entities.remove(e);
-  arr.length = 0;
-}
-
 function addSiteEntities() {
   clearEntities(siteEntities);
   clearEntities(clusterEntities);
@@ -262,6 +286,7 @@ function addSiteEntities() {
       name: s.name,
       position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat),
       properties: {
+        isCluster: false,
         customerId: s.id,
         population: s.pop,
         year: s.year,
@@ -292,34 +317,13 @@ function addSiteEntities() {
 
     siteEntities.push(e);
   }
-
-  showingClusters = false;
 }
 
-function bubbleSvgDataUrl(diameter = 64) {
-  const r = diameter / 2;
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${diameter}" height="${diameter}" viewBox="0 0 ${diameter} ${diameter}">
-      <defs>
-        <filter id="s" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.35)"/>
-        </filter>
-      </defs>
-      <circle cx="${r}" cy="${r}" r="${r - 4}" fill="rgba(255,215,0,0.95)" stroke="rgba(0,0,0,0.85)" stroke-width="4" filter="url(#s)"/>
-    </svg>
-  `.trim();
-  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
-}
-const CLUSTER_BUBBLE = bubbleSvgDataUrl(72);
-
-function gridSizeDegForHeight(h) {
-  const t = clamp((h - GRID_HEIGHT_NEAR) / (GRID_HEIGHT_FAR - GRID_HEIGHT_NEAR), 0, 1);
-  return lerp(GRID_DEG_NEAR, GRID_DEG_FAR, t);
-}
-
-// simple grid clustering on lat/lon
+// =============================================================
+// CLUSTER BUILDING
+// =============================================================
 function buildClusters(gridDeg) {
-  const buckets = new Map(); // key -> {count,popSum,latSum,lonSum, members:[]}
+  const buckets = new Map(); // key -> bucket
 
   for (const s of sites) {
     const gx = Math.floor(s.lon / gridDeg);
@@ -328,7 +332,7 @@ function buildClusters(gridDeg) {
 
     let b = buckets.get(key);
     if (!b) {
-      b = { count: 0, popSum: 0, latSum: 0, lonSum: 0, members: [] };
+      b = { count: 0, popSum: 0, latSum: 0, lonSum: 0 };
       buckets.set(key, b);
     }
 
@@ -336,7 +340,6 @@ function buildClusters(gridDeg) {
     b.popSum += s.pop;
     b.latSum += s.lat;
     b.lonSum += s.lon;
-    b.members.push(s);
   }
 
   const clusters = [];
@@ -346,12 +349,14 @@ function buildClusters(gridDeg) {
       popSum: b.popSum,
       lat: b.latSum / b.count,
       lon: b.lonSum / b.count,
-      members: b.members,
     });
   }
   return clusters;
 }
 
+// =============================================================
+// RENDER: GRID CLUSTERS
+// =============================================================
 function showClusterEntities() {
   clearEntities(siteEntities);
   clearEntities(clusterEntities);
@@ -361,8 +366,11 @@ function showClusterEntities() {
   const clusters = buildClusters(gridDeg);
 
   for (const c of clusters) {
-    // scale bubble by count
-    const s = clamp(1.0 + Math.log10(Math.max(c.count, 1)) * 0.35, CLUSTER_MIN_SCALE, CLUSTER_MAX_SCALE);
+    const s = clamp(
+      1.0 + Math.log10(Math.max(c.count, 1)) * 0.35,
+      CLUSTER_MIN_SCALE,
+      CLUSTER_MAX_SCALE
+    );
 
     const e = viewer.entities.add({
       position: Cesium.Cartesian3.fromDegrees(c.lon, c.lat),
@@ -370,7 +378,6 @@ function showClusterEntities() {
         isCluster: true,
         count: c.count,
         popSum: c.popSum,
-        // store members if you want later
       },
       billboard: {
         image: CLUSTER_BUBBLE,
@@ -398,20 +405,76 @@ function showClusterEntities() {
 
     clusterEntities.push(e);
   }
-
-  showingClusters = true;
 }
 
+// =============================================================
+// RENDER: ONE MEGA CLUSTER
+// =============================================================
+function showOneMegaCluster() {
+  clearEntities(siteEntities);
+  clearEntities(clusterEntities);
+
+  let popSum = 0;
+  let latSum = 0;
+  let lonSum = 0;
+
+  for (const s of sites) {
+    popSum += s.pop;
+    latSum += s.lat;
+    lonSum += s.lon;
+  }
+
+  const count = sites.length;
+  const lat = latSum / count;
+  const lon = lonSum / count;
+
+  const e = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(lon, lat),
+    properties: { isCluster: true, count, popSum, mega: true },
+    billboard: {
+      image: CLUSTER_BUBBLE,
+      width: 64,
+      height: 64,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      scale: CLUSTER_MAX_SCALE,
+    },
+    label: {
+      text: `Sites: ${count}\nPop: ${fmtInt(popSum)}`,
+      font: "bold 16px sans-serif",
+      fillColor: Cesium.Color.WHITE,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 6,
+      showBackground: true,
+      backgroundColor: new Cesium.Color(0, 0, 0, 0.35),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      scale: CLUSTER_MAX_SCALE,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      pixelOffset: new Cesium.Cartesian2(0, 0),
+    },
+  });
+
+  clusterEntities.push(e);
+}
+
+// =============================================================
+// MODE SWITCHING (THIS IS THE MERGE LOGIC)
+// =============================================================
 function refreshClustersIfNeeded() {
   const h = viewer.camera.positionCartographic.height;
 
-  if (h >= CLUSTER_MODE_MIN_HEIGHT) {
-    // cluster mode
-    showClusterEntities();
-  } else {
-    // individual mode
-    addSiteEntities();
+  if (h >= FULL_MERGE_MIN_HEIGHT) {
+    showOneMegaCluster();
+    return;
   }
+
+  if (h >= CLUSTER_MODE_MIN_HEIGHT) {
+    showClusterEntities();
+    return;
+  }
+
+  addSiteEntities();
 }
 
 // Debounce refresh while panning/zooming
@@ -425,7 +488,7 @@ function requestRefresh() {
 }
 
 // =============================================================
-// CLICK: if cluster clicked, zoom in a bit toward it
+// CLICK: if cluster clicked, zoom in toward it
 // =============================================================
 const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 handler.setInputAction((movement) => {
@@ -433,10 +496,12 @@ handler.setInputAction((movement) => {
   if (!picked || !picked.id) return;
 
   const ent = picked.id;
-  const isCluster = ent.properties?.isCluster?.getValue?.(Cesium.JulianDate.now());
+  const now = Cesium.JulianDate.now();
+  const isCluster = ent.properties?.isCluster?.getValue?.(now);
   if (!isCluster) return;
 
-  const pos = ent.position.getValue(Cesium.JulianDate.now());
+  const pos = ent.position.getValue(now);
+
   viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(pos, 1.0), {
     duration: 0.9,
     offset: new Cesium.HeadingPitchRange(
@@ -461,18 +526,15 @@ handler.setInputAction((movement) => {
       return;
     }
 
-    // initial render
+    // Initial render + zoom
     addSiteEntities();
     viewer.zoomTo(viewer.entities);
 
-    // refresh on camera move
+    // Refresh on camera motion
     viewer.camera.moveEnd.addEventListener(requestRefresh);
-    viewer.camera.changed.addEventListener(() => {
-      // optional: keep it responsive while zooming
-      requestRefresh();
-    });
+    viewer.camera.changed.addEventListener(requestRefresh);
 
-    // also do one after first load
+    // One immediate refresh so it chooses the right mode for your starting view
     refreshClustersIfNeeded();
   } catch (e) {
     console.error(e);
