@@ -27,7 +27,7 @@ Customer ID,System ID,System Name,Design Type,Status,Install Date,Duplicate Cust
 103,67,Bulo HC III #1,Lighting Only,Installed,12/11/2021,,,103,2026,"20,566.00",Inferred,,,103,Butambala,"0.1132195356143764, 31.998843355928518",,103,Bulo HC III,Health Centre,103
 104,68,Ngando HC III #1,Lighting Only,Installed,11/13/2021,,,104,2026,"21,950.00",Inferred,,,104,Butambala,"0.07585647329221862, 31.925437936171036",,104,Ngando HC III,Health Centre,104
 105,69,Kyabadaza HC III #1,Lighting Only,Installed,11/13/2021,,,105,2026,"15,104.00",Inferred,,,105,,"0.1209112570014584, 32.18190175541943",,105,Kyabadaza HC III,Health Centre,105
-150,93,Mpenja SS #1,Lighting Only,Installed,7/9/2025,,,150,2026,0.00,Inferred,,,150,Gomba,"0.22446801701869717, 32.052420229275",,150,Mpenja SS,School,150
+150,93,Mpenja SS #1,Lighting Only,Installed,7/9/2025,,,150,2026,300,Inferred,,,150,Gomba,"0.22446801701869717, 32.052420229275",,150,Mpenja SS,School,150
 153,94,Kyayi Seed SS #1,Lighting Only,Installed,7/16/2025,,,153,2026,450.00,Inferred,,,153,Gomba,"0.21451, 31.39893",,153,Kyayi Seed SS,School,153
 162,90,Bukandula Mixed SS #1,Lighting Only,Installed,6/25/2025,,,162,2026,815.00,Inferred,,,162,Gomba,"0.16821046769081874, 31.83270331495879",,162,Bukandula Mixed SS,School,162
 186,83,Kasaka SSS #1,Lighting Only,Installed,2/19/2025,,,186,2026,"1,128.00",Inferred,,,186,Gomba,"0.18439681566284538, 31.901187131128054",,186,Kasaka SSS,School,186
@@ -46,4 +46,5 @@ Customer ID,System ID,System Name,Design Type,Status,Install Date,Duplicate Cust
 215,97,St. Maria Goretti PS #1,Lighting Only,Installed,11/8/2025,,,,,,,,,,,,,,,,
 215,98,St. Maria Goretti PS #2,Loads,Installed,11/8/2025,,,,,,,,,,,,,,,,
 216,99,Hillside PS #1,Lighting Only,Installed,11/4/2025,,,,,,,,,,,,,,,,
+
 217,100,Vision Park Junior PS #1,Lighting/USB Charging,Installed,1/2/2026,,,,,,,,,,,,,,,,
