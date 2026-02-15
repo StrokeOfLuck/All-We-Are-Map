@@ -518,7 +518,17 @@ sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) =>
 async function buildEntitiesFromCSV() {
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
-  const res = await fetch(encodeURI(CSV_URL));
+  // ✅ RESET FIRST so stale points/clusters can't survive a failed fetch
+  sitesDS.entities.removeAll();
+  entities.length = 0;
+  siteItems.length = 0;
+
+  // ✅ cache-bust while debugging so you KNOW you’re reading the latest CSV
+  const url = `${CSV_URL}?v=${Date.now()}`;
+
+  const res = await fetch(encodeURI(url), { cache: "no-store" });
+  console.log("CSV fetch:", res.status, res.url);
+
   if (!res.ok) {
     console.error(`Failed to fetch ${CSV_URL}:`, res.status, res.statusText);
     return;
@@ -526,32 +536,36 @@ async function buildEntitiesFromCSV() {
 
   const text = await res.text();
   const rows = parseCSV(text);
+  console.log("CSV rows:", rows.length);
+
   if (rows.length < 2) {
     console.warn(`${CSV_URL} has no data rows.`);
     return;
   }
 
+  // New CSV layout (0-based indices)
   const IDX_INST_CUST_ID = 0;
-  const IDX_INST_STATUS = 4;
+  const IDX_INST_STATUS  = 4;
 
-  const IDX_POP_CUST_ID = 8;
-  const IDX_POP_YEAR = 9;
-  const IDX_POP_VALUE = 10;
+  const IDX_POP_CUST_ID  = 8;
+  const IDX_POP_YEAR     = 9;
+  const IDX_POP_VALUE    = 10;
 
-  const IDX_LOC_ID = 14;
-  const IDX_LOC_COORDS = 16;
+  const IDX_LOC_ID       = 14;
+  const IDX_LOC_COORDS   = 16;
 
-  const IDX_CUST_ID = 18;
-  const IDX_CUST_NAME = 19;
-  const IDX_CUST_LOC_ID = 21;
+  const IDX_CUST_ID      = 18;
+  const IDX_CUST_NAME    = 19;
+  const IDX_CUST_LOC_ID  = 21;
 
-  sitesDS.entities.removeAll();
-  entities.length = 0;
-  siteItems.length = 0;
-
+  // -------------------------------------------------------------
+  // PASS 0: Collect Installed Customer IDs
+  // -------------------------------------------------------------
   const installedIds = new Set();
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
+
     const custIdNum = toNum(row[IDX_INST_CUST_ID]);
     if (custIdNum == null) continue;
 
@@ -561,7 +575,13 @@ async function buildEntitiesFromCSV() {
     installedIds.add(String(Math.trunc(custIdNum)));
   }
 
+  console.log("Installed IDs:", installedIds.size);
+
+  // -------------------------------------------------------------
+  // PASS 1: Latest population per Customer ID
+  // -------------------------------------------------------------
   const popById = new Map();
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
@@ -581,7 +601,13 @@ async function buildEntitiesFromCSV() {
     }
   }
 
+  console.log("Pop IDs:", popById.size);
+
+  // -------------------------------------------------------------
+  // PASS 2: Coords by Loc ID
+  // -------------------------------------------------------------
   const coordsByLocId = new Map();
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
@@ -594,7 +620,13 @@ async function buildEntitiesFromCSV() {
     coordsByLocId.set(String(Math.trunc(locIdNum)), coord);
   }
 
+  console.log("Locs with coords:", coordsByLocId.size);
+
+  // -------------------------------------------------------------
+  // PASS 3: Customer name + locId by Customer ID
+  // -------------------------------------------------------------
   const customerById = new Map();
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
 
@@ -607,20 +639,29 @@ async function buildEntitiesFromCSV() {
 
     const id = String(Math.trunc(idNum));
     const locId = String(Math.trunc(locIdNum));
+
     if (!customerById.has(id)) customerById.set(id, { name, locId });
   }
 
+  console.log("Customers with name+loc:", customerById.size);
+
+  // -------------------------------------------------------------
+  // PASS 4: Plot installed + coords + pop
+  // -------------------------------------------------------------
   let plotted = 0;
+  let missingCustomer = 0;
+  let missingCoords = 0;
+  let missingPop = 0;
 
   for (const id of installedIds) {
     const cust = customerById.get(id);
-    if (!cust) continue;
+    if (!cust) { missingCustomer++; continue; }
 
     const coord = coordsByLocId.get(cust.locId);
-    if (!coord) continue;
+    if (!coord) { missingCoords++; continue; }
 
     const popRec = popById.get(id);
-    if (!popRec || popRec.pop == null) continue;
+    if (!popRec || popRec.pop == null) { missingPop++; continue; }
 
     const pop = popRec.pop;
     if (pop <= 0) continue;
@@ -673,28 +714,19 @@ async function buildEntitiesFromCSV() {
     });
 
     entities.push(entity);
-    siteItems.push({
-      name: customerName,
-      customerId: id,
-      lat,
-      lon,
-      population: pop,
-      entity,
-    });
-
+    siteItems.push({ name: customerName, customerId: id, lat, lon, population: pop, entity });
     plotted++;
   }
 
   console.log("Plotted installed sites:", plotted);
+  console.log("Missing customer:", missingCustomer, "Missing coords:", missingCoords, "Missing pop:", missingPop);
 
-  // Force clustering refresh (starts ON)
+  // Force clustering refresh
   sitesDS.clustering.enabled = false;
   sitesDS.clustering.enabled = true;
 
-  // Immediately enforce threshold + ramp
   updateClusteringByCameraDistance();
 }
-
 // =============================================================
 // SIDEBAR
 // =============================================================
@@ -965,6 +997,7 @@ window.addEventListener(
     return;
   }
 
+  // ✅ zoom to the datasource, not viewer.entities
   viewer.zoomTo(sitesDS.entities);
 
   autoAdvance = true;
