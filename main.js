@@ -1,8 +1,12 @@
 // =============================================================
-// FULL WORKING SCRIPT (2-pass, NO SKIPPING COORD SITES)
-// PASS 1: Build populationById from population block:
-//   Use Customer ID column nearest to AI + AJ where AI==TRUE
-// PASS 2: Plot ALL coordinate sites (Customer ID + Customer Name + Coordinates)
+// FULL WORKING SCRIPT
+// Data format: Impact_Map_Export - Sheet1.csv
+// Features:
+// 1) Filters to Installed systems only
+// 2) Joins Customer -> Location -> Population (latest year)
+// 3) Plots sites
+// 4) Clustering into bigger bubbles when zoomed out
+//    Cluster bubble shows: count of sites + total population
 // =============================================================
 
 Cesium.Ion.defaultAccessToken = "";
@@ -22,18 +26,6 @@ viewer.resolutionScale = window.devicePixelRatio;
 const canvas = viewer.scene.canvas;
 canvas.setAttribute("tabindex", "0");
 canvas.focus();
-
-
-/*
-// FREE backup basemap (no tokens)
-viewer.imageryLayers.addImageryProvider(
-  new Cesium.UrlTemplateImageryProvider({
-    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-    subdomains: ["a", "b", "c"],
-    credit: "OpenTopoMap",
-  })
-);
-*/
 
 viewer.imageryLayers.addImageryProvider(
   new Cesium.UrlTemplateImageryProvider({
@@ -65,7 +57,7 @@ let autoAdvance = true;
 // DATA + STATE
 // =============================================================
 const entities = [];
-const siteItems = []; // { name, customerId, lat, lon, population|null, entity }
+const siteItems = []; // { name, customerId, lat, lon, population, entity }
 
 let activeIndex = 0;
 let orbit = false;
@@ -74,6 +66,96 @@ let lastPerf = performance.now();
 let isFlying = false;
 
 let tourRunId = 0;
+
+// =============================================================
+// CLUSTERING (NEW)
+// Cesium clustering works on a DataSource, not viewer.entities
+// =============================================================
+const sitesDS = new Cesium.CustomDataSource("sites");
+viewer.dataSources.add(sitesDS);
+
+sitesDS.clustering.enabled = true;
+sitesDS.clustering.minimumClusterSize = 2;
+sitesDS.clustering.pixelRange = 80;
+
+// Simple SVG bubble so you do not need an image file in your repo
+function makeClusterBubbleDataUrl({
+  diameter = 64,
+  fill = "rgba(255, 215, 0, 0.95)",
+  stroke = "rgba(0, 0, 0, 0.85)",
+  strokeWidth = 4,
+  shadow = true,
+} = {}) {
+  const r = diameter / 2;
+  const shadowFilter = shadow
+    ? `<filter id="s" x="-50%" y="-50%" width="200%" height="200%">
+         <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.35)"/>
+       </filter>`
+    : "";
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${diameter}" height="${diameter}" viewBox="0 0 ${diameter} ${diameter}">
+      ${shadowFilter}
+      <circle cx="${r}" cy="${r}" r="${r - strokeWidth}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" ${shadow ? 'filter="url(#s)"' : ""}/>
+    </svg>
+  `.trim();
+
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+}
+
+const CLUSTER_BUBBLE_URL = makeClusterBubbleDataUrl({ diameter: 64 });
+
+// Cluster label shows count and total population
+sitesDS.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
+  const count = clusteredEntities.length;
+
+  let popSum = 0;
+  const now = Cesium.JulianDate.now();
+  for (const e of clusteredEntities) {
+    const p = e.properties?.population?.getValue?.(now);
+    if (Number.isFinite(p)) popSum += p;
+  }
+
+  cluster.point.show = false;
+
+  cluster.billboard.show = true;
+  cluster.billboard.image = CLUSTER_BUBBLE_URL;
+  cluster.billboard.width = 56;
+  cluster.billboard.height = 56;
+  cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+  cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+  cluster.label.show = true;
+  cluster.label.font = "bold 16px sans-serif";
+  cluster.label.fillColor = Cesium.Color.WHITE;
+  cluster.label.outlineColor = Cesium.Color.BLACK;
+  cluster.label.outlineWidth = 6;
+  cluster.label.showBackground = true;
+  cluster.label.backgroundColor = new Cesium.Color(0, 0, 0, 0.35);
+  cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+
+  cluster.label.text = `${count}\n${fmtInt(popSum)}`;
+
+  // Scale bubble a bit with count
+  const s = clamp(1.0 + Math.log10(Math.max(count, 1)) * 0.25, 1.0, 2.2);
+  cluster.billboard.scale = s;
+  cluster.label.scale = s;
+});
+
+// Ramp clustering strength with altitude so zoomed out becomes one mega cluster
+function updateClusterStrength() {
+  const h = viewer.camera.positionCartographic.height;
+
+  const nearH = 50_000;
+  const farH = 2_500_000;
+
+  const t = clamp((h - nearH) / (farH - nearH), 0, 1);
+
+  // pixelRange ramps from 25 (mostly separate) to 450 (heavy merge)
+  sitesDS.clustering.pixelRange = Math.round(25 + t * 425);
+}
+
+viewer.scene.postRender.addEventListener(updateClusterStrength);
 
 // =============================================================
 // HELPERS
@@ -297,11 +379,6 @@ function toNum(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-function parseBool(x) {
-  const s = String(x ?? "").trim().toLowerCase();
-  return s === "true" || s === "1" || s === "yes" || s === "y";
-}
-
 function parseCoordinatesLatLon(coordStr) {
   if (!coordStr) return null;
 
@@ -335,30 +412,10 @@ function popToPixelSize(pop) {
   return clamp(size, 6, 34);
 }
 
-// ✅ NEW: pick the Customer ID column that is physically closest to AI (latest flag)
-function findNearestCustomerIdColumn(headers, idxLatestFlag) {
-  const isCustomerIdHeader = (h) => String(h || "").trim().toLowerCase() === "customer id";
-
-  // Prefer LEFT side (AB is left of AI)
-  for (let d = 1; d <= 30; d++) {
-    const left = idxLatestFlag - d;
-    if (left >= 0 && isCustomerIdHeader(headers[left])) return left;
-  }
-
-  // Fallback: try right side
-  for (let d = 1; d <= 30; d++) {
-    const right = idxLatestFlag + d;
-    if (right < headers.length && isCustomerIdHeader(headers[right])) return right;
-  }
-
-  return null;
-}
-
 // =============================================================
 // MAIN (Impact_Map_Export_3.0 format)
 // =============================================================
 async function buildEntitiesFromCSV() {
-  // 👇 change this to your new file name in the repo
   const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
   const res = await fetch(encodeURI(CSV_URL));
@@ -374,32 +431,32 @@ async function buildEntitiesFromCSV() {
     return;
   }
 
-  // New CSV layout (0-based indices)
+  // Layout indices (0-based)
   // A–F Installed Systems table
-  const IDX_INST_CUST_ID = 0;  // A
-  const IDX_INST_STATUS  = 4;  // E ("Installed")
+  const IDX_INST_CUST_ID = 0; // A
+  const IDX_INST_STATUS = 4; // E ("Installed")
 
   // I–L Population table
-  const IDX_POP_CUST_ID  = 8;  // I
-  const IDX_POP_YEAR     = 9;  // J
-  const IDX_POP_VALUE    = 10; // K
+  const IDX_POP_CUST_ID = 8; // I
+  const IDX_POP_YEAR = 9; // J
+  const IDX_POP_VALUE = 10; // K
 
   // O–Q Locations table
-  const IDX_LOC_ID       = 14; // O
-  const IDX_LOC_COORDS   = 16; // Q (Coordinates)
+  const IDX_LOC_ID = 14; // O
+  const IDX_LOC_COORDS = 16; // Q
 
   // S–V Customers table
-  const IDX_CUST_ID      = 18; // S
-  const IDX_CUST_NAME    = 19; // T
-  const IDX_CUST_LOC_ID  = 21; // V
+  const IDX_CUST_ID = 18; // S
+  const IDX_CUST_NAME = 19; // T
+  const IDX_CUST_LOC_ID = 21; // V
 
   // Reset
-  viewer.entities.removeAll();
+  sitesDS.entities.removeAll();
   entities.length = 0;
   siteItems.length = 0;
 
   // -------------------------------------------------------------
-  // PASS 0: Collect Installed Customer IDs (from Systems table)
+  // PASS 0: Collect Installed Customer IDs
   // -------------------------------------------------------------
   const installedIds = new Set();
 
@@ -418,9 +475,8 @@ async function buildEntitiesFromCSV() {
   console.log("Installed customer IDs:", installedIds.size);
 
   // -------------------------------------------------------------
-  // PASS 1: Build latest population per Customer ID
+  // PASS 1: Latest population per Customer ID
   // -------------------------------------------------------------
-  // Keep the max year row per customer. If tie, keep the bigger population.
   const popById = new Map(); // id -> {year, pop}
 
   for (let r = 1; r < rows.length; r++) {
@@ -445,7 +501,7 @@ async function buildEntitiesFromCSV() {
   console.log("Population IDs with data:", popById.size);
 
   // -------------------------------------------------------------
-  // PASS 2: Build coordinates by Loc ID
+  // PASS 2: Coordinates by Loc ID
   // -------------------------------------------------------------
   const coordsByLocId = new Map(); // locId -> {lat, lon}
 
@@ -465,7 +521,7 @@ async function buildEntitiesFromCSV() {
   console.log("Locations with coords:", coordsByLocId.size);
 
   // -------------------------------------------------------------
-  // PASS 3: Build customer name + locId by Customer ID
+  // PASS 3: Customer name + locId by Customer ID
   // -------------------------------------------------------------
   const customerById = new Map(); // id -> {name, locId}
 
@@ -477,13 +533,11 @@ async function buildEntitiesFromCSV() {
 
     const name = String(row[IDX_CUST_NAME] ?? "").trim();
     const locIdNum = toNum(row[IDX_CUST_LOC_ID]);
-
     if (!name || locIdNum == null) continue;
 
     const id = String(Math.trunc(idNum));
     const locId = String(Math.trunc(locIdNum));
 
-    // first good one wins (or you can overwrite if you prefer)
     if (!customerById.has(id)) {
       customerById.set(id, { name, locId });
     }
@@ -492,7 +546,7 @@ async function buildEntitiesFromCSV() {
   console.log("Customers with name+loc:", customerById.size);
 
   // -------------------------------------------------------------
-  // PASS 4: Plot ONLY installed customers that have coords + pop
+  // PASS 4: Plot ONLY installed customers with coords + population
   // -------------------------------------------------------------
   let plotted = 0;
   let missingCustomer = 0;
@@ -525,7 +579,7 @@ async function buildEntitiesFromCSV() {
 
     const labelText = `${cust.name}\nPopulation served: ${fmtInt(pop)}`;
 
-    const entity = viewer.entities.add({
+    const entity = sitesDS.entities.add({
       name: cust.name,
       position: Cesium.Cartesian3.fromDegrees(lon, lat),
 
@@ -563,7 +617,6 @@ async function buildEntitiesFromCSV() {
         backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
         pixelOffset: new Cesium.Cartesian2(0, -40),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        //distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 200_000),
         translucencyByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
         scaleByDistance: new Cesium.NearFarScalar(20_000, 1.0, 200_000, 0.0),
       },
@@ -587,6 +640,7 @@ async function buildEntitiesFromCSV() {
   console.log("Missing coords:", missingCoords);
   console.log("Missing population:", missingPop);
 }
+
 // =============================================================
 // SIDEBAR
 // =============================================================
@@ -632,10 +686,7 @@ function renderSiteList(filterText = "") {
     const row = document.createElement("div");
     row.className = "siteRow";
 
-    const popLine =
-      s.population == null
-        ? `<div class="siteSub">Pop: (missing)</div>`
-        : `<div class="siteSub">Pop: ${fmtInt(s.population)}</div>`;
+    const popLine = `<div class="siteSub">Pop: ${fmtInt(s.population)}</div>`;
 
     row.innerHTML = `
       <div>${s.name}</div>
@@ -857,7 +908,7 @@ window.addEventListener(
     return;
   }
 
-  viewer.zoomTo(viewer.entities);
+  viewer.zoomTo(sitesDS.entities);
 
   autoAdvance = true;
   runTourGuarded();
