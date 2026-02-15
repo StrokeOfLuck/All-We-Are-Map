@@ -63,7 +63,7 @@ const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 const CLUSTER_MODE_MIN_HEIGHT = 15_000;
 
 // Above this height => force ONE mega bubble
-const FULL_MERGE_MIN_HEIGHT = 1_500_000;
+const FULL_MERGE_MIN_HEIGHT = 1_000_000;
 
 // Between those heights => ramp grid size (bigger grid = more merging)
 const GRID_DEG_NEAR = 0.15;
