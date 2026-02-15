@@ -39,10 +39,10 @@ canvas.focus();
 const CSV_URL = "Impact_Map_Export - Sheet1.csv";
 
 // Below this height: show individual pins
-const CLUSTER_MODE_MIN_HEIGHT = 20_000;
+const CLUSTER_MODE_MIN_HEIGHT = 10_000;
 
 // Above this height: force ONE mega bubble
-const FULL_MERGE_MIN_HEIGHT = 500_000;
+const FULL_MERGE_MIN_HEIGHT = 1_000_000;
 
 // Between those heights: grid clustering ramps from near -> far grid size
 const GRID_DEG_NEAR = 0.15;   // less merging (smaller grid)
